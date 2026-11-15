@@ -1,0 +1,36 @@
+# projctl configuration for gps-sync. Personal project, GitHub only.
+# First-found-wins resolution, so this one file carries everything projctl needs.
+platform: github
+
+github:
+  # Also auto-detected from the git remote; stated explicitly so the config is
+  # readable without resolving the remote.
+  repo: "astavonin/gps-sync"
+  labels:
+    # OR group: exactly one must be present on each new issue. These two are the
+    # repository's own labels; the type::/development-status:: scheme the projctl
+    # docs show as an example does not exist here and would fail issue creation.
+    default:
+      - ["enhancement", "bug"]
+
+common:
+  issue_template:
+    required_sections:
+      - "Description"
+      - "Acceptance Criteria"
+  mr_template:
+    required_sections:
+      - "Summary"
+      - "Implementation Details"
+      - "How It Was Tested"
+    # No required reviewers: single-maintainer project, so enforcing one would
+    # block every PR.
+
+planning_sync:
+  # Google Drive for Desktop mounts here on this machine; ~/GoogleDrive does not
+  # exist. The backup lands in <base>/backup/planning/gps-sync/.
+  gdrive_base: "~/Google Drive"
+
+search:
+  # No docs/ corpus in this project; planning/ is searched separately.
+  docs_path: null

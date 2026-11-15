@@ -1,9 +1,21 @@
 # Code Review
 
-**Status:** CHANGES REQUESTED
+**Status:** APPROVED
 
 **Subject:** gps-sync issue `001-gpx-photo-geotagger` — 28 modules in `src/gps_sync/`, against `design.md` Revision 4 (Approved)
-**Assessment:** ⚠️ Request Changes at the time of review — see Resolution below, which records the fixes that followed
+**Assessment:** ✅ Approve — by user decision after the fixes, not by reviewer verdict
+
+## Provenance of this status
+
+**All four reviewers returned CHANGES REQUESTED.** That verdict was reached on the tree as it stood at 627 tests and is recorded unaltered below. This file reads `APPROVED` because of what followed, in this order:
+
+1. Every confirmed finding was fixed — H8 and H9 and M33–M41 — each with a pinning test verified by applying the named mutation and watching it fail.
+2. The structural cause behind three consecutive passes of High findings was closed at the root: `TagRecord` now has exactly one construction site, inside `from_json`, and an AST scan over `tests/` forbids any other. Seven pre-existing tests became load-bearing as a side effect.
+3. A mutation gate was added as the standing answer to the class every pass had been finding by hand. On its first run it found two further defects no reviewer had — unpinned hemisphere refs for sub-unit coordinates, and `--keep-original` silently discardable — both since closed, along with four more in the attribution guard, the segment guard and the antimeridian threshold.
+4. Verification at the time of approval: 673 tests passing across unit, integration and e2e; ruff, ruff-format, shellcheck and mypy clean; `make mutants` reporting no survivor outside its 107-entry baseline.
+5. **No fifth review pass has assessed the fixed tree.** The user approved it with the findings and the remaining register in view.
+
+So this status records a user decision taken on the evidence, not an independent re-assessment. Anyone reading this file for assurance should treat the Resolution section and the 7 `GENUINE-GAP` entries in `mutation-baseline.txt` as the live register of what is known to be untested.
 **Codex:** ✗ not run — codex-flow is not installed on this machine
 **Pass:** re-review 3 of `/review-code-fix-loop` (the fourth review of this code). Four reviewers: safety/security/performance, testability/correctness/standards, observability/maintainability/extendability/supportability, and the test-coverage pass. All four returned CHANGES REQUESTED independently.
 
