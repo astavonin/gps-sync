@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gps-sync"
+version = "0.1.0"
+description = "Write GPS positions from GPX tracks into photographs that lack one, without ever overwriting an existing position."
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = []
+
+[project.scripts]
+gps-sync = "gps_sync.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py315"
+src = ["src", "tests"]
+# The design-validation prototype, planning documents and fixtures are not ours to reformat;
+# mutants/ is the mutation tool's mutated working copy.
+extend-exclude = ["harness", "planning", "testdata", "mutants"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "N", "D", "RUF", "C4", "PT"]
+
+# D105/D107: Google style documents construction in the class docstring, not per dunder.
+# N818: ToolFailure and the like are domain terms for exit-code-2 conditions, not generic errors.
+ignore = ["D105", "D107", "N818"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+# Tests: D (docstrings) - test names describe behaviour; PT018 - the conjoined assertions state one
+# fact about one outcome; PT011 - ValueError is the single signal the outcome presence rules raise;
+# RUF059 - unpacked batch fixtures name every position even when a test inspects only some.
+"tests/**" = ["D", "PT011", "PT018", "RUF059"]
+
+[tool.mypy]
+python_version = "3.15"
+strict = true
+mypy_path = "src"
+packages = ["gps_sync"]
+# `mypy .` is the documented invocation and must stay clean. The test suite is deliberately
+# untyped (fixtures, fakes, parametrised callables), so strict checking covers the shipped code only.
+exclude = ["^tests/", "^harness/", "^planning/", "^testdata/", "^\\.venv/", "^build/", "^mutants/"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "integration: crosses the real filesystem and a real exiftool; run separately from unit tests",
+    "e2e: drives the whole tool end to end over a copied fixture tree",
+]
+
+[project.optional-dependencies]
+# Dev-only tooling. The shipped package has zero runtime dependencies and must stay that way.
+dev = ["mutmut==3.8.1"]
+
+[tool.mutmut]
+# Mutation gate scope: the read -> classify -> match -> write path, where every defect found in
+# review (a masked read warning, a missing instance-selection rule, has_gps_key=bool(positions), a
+# blank OffsetTimeOriginal falling through to --utc-offset) was a wrong coordinate or an
+# overwritten position. A surviving mutant here means a test is missing.
+#
+# Deliberately NOT in scope: report.py, serialise.py, runrecord.py, summary.py (output labels and
+# serialisation: a wrong label is not a wrong coordinate), and the rest of the package (CLI
+# grammar, discovery, registry, transport plumbing, gpx parsing). Widen source_paths and the
+# baseline together if that judgement changes.
+# tests/unit/test_readme.py reads README.md relative to the copied tree.
+also_copy = ["README.md"]
+source_paths = ["src/gps_sync"]
+only_mutate = [
+    "src/gps_sync/records.py",
+    "src/gps_sync/classifier.py",
+    "src/gps_sync/matcher.py",
+    "src/gps_sync/timeres.py",
+    "src/gps_sync/writer.py",
+    "src/gps_sync/exitcode.py",
+]
+# Unit selector only: the integration and e2e tiers spawn real exiftool over RAW files (~40 s) and
+# would multiply the run by the mutant count. Integration coverage is therefore NOT part of the gate.
+pytest_add_cli_args = ["-m", "not integration and not e2e", "-p", "no:cacheprovider"]
