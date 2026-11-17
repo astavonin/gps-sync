@@ -38,7 +38,7 @@ class RecordContext:
 
     options: Mapping[str, Any]
     media_root: str
-    tracks_root: str
+    tracks_root: str | None
     exiftool_version: str
 
 
@@ -81,6 +81,9 @@ def _reconciliation_dict(reconciliation: Reconciliation) -> dict[str, Any]:
         data["last_marker"] = reconciliation.last_marker
     if reconciliation.process_failure is not None:
         data["process_failure"] = reconciliation.process_failure
+    if reconciliation.unreconciled:
+        data["unreconciled_blocks"] = list(reconciliation.unreconciled)
+        data["unreconciled_paths"] = list(reconciliation.unreconciled_paths)
     return data
 
 

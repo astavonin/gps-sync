@@ -18,7 +18,7 @@ class Options:
     """Validated options."""
 
     media: Path
-    tracks: Path
+    tracks: Path | None
     write: bool = False
     max_gap: timedelta = DEFAULT_MAX_GAP
     extend: timedelta = timedelta(0)
@@ -28,12 +28,13 @@ class Options:
     keep_original: bool = False
     json: bool = False
     verbose: bool = False
+    video: bool = False
 
     def as_record(self) -> dict[str, Any]:
         """Render the options for the audit record and the JSON record."""
         return {
             "media": str(self.media),
-            "tracks": str(self.tracks),
+            "tracks": None if self.tracks is None else str(self.tracks),
             "write": self.write,
             "max_gap_s": self.max_gap.total_seconds(),
             "extend_s": self.extend.total_seconds(),
@@ -43,6 +44,7 @@ class Options:
             "keep_original": self.keep_original,
             "json": self.json,
             "verbose": self.verbose,
+            "video": self.video,
         }
 
 
@@ -76,12 +78,24 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser; parse errors raise ``ToolFailure`` (exit code 2)."""
     parser = _Parser(
         prog="gps-sync",
-        description="Write GPS positions from GPX tracks into stills that carry none. "
+        description="Write GPS positions into stills, and with --video into video containers, "
+        "that carry none: from GPX tracks, or from a clip's own telemetry. "
         "Dry-run is the default; an existing position is never overwritten.",
         allow_abbrev=False,
     )
     parser.add_argument("--media", required=True, type=Path, help="root of the media tree to scan")
-    parser.add_argument("--tracks", required=True, type=Path, help="root of the GPX tree to parse")
+    parser.add_argument(
+        "--tracks",
+        type=Path,
+        default=None,
+        help="root of the GPX tree to parse (required unless --video is given; omitted under "
+        "--video, nothing is matched against a track)",
+    )
+    parser.add_argument(
+        "--video",
+        action="store_true",
+        help="also admit MP4 and MOV video containers as candidates",
+    )
     parser.add_argument("--write", action="store_true", help="apply writes (default is dry-run)")
     parser.add_argument(
         "--max-gap",
@@ -109,7 +123,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=_offset,
         default=None,
         metavar="±HH:MM",
-        help="offset for local-time stills that carry no OffsetTimeOriginal",
+        help="offset for local-time stills that carry no OffsetTimeOriginal; never consulted for a "
+        "video container",
     )
     parser.add_argument(
         "--review-dir",
@@ -143,6 +158,10 @@ def _glue_signed_values(argv: Sequence[str]) -> list[str]:
 def parse_options(argv: Sequence[str]) -> Options:
     """Parse and validate ``argv``."""
     namespace = build_parser().parse_args(_glue_signed_values(argv))
+    if namespace.tracks is None and not namespace.video:
+        raise ToolFailure(
+            "the following arguments are required: --tracks (unless --video is given)"
+        )
     return Options(
         media=namespace.media,
         tracks=namespace.tracks,
@@ -155,4 +174,5 @@ def parse_options(argv: Sequence[str]) -> Options:
         keep_original=namespace.keep_original,
         json=namespace.json,
         verbose=namespace.verbose,
+        video=namespace.video,
     )

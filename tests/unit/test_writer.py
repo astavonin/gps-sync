@@ -18,12 +18,12 @@ from gps_sync.model import (
 from gps_sync.transport import TransportError, partition_stream
 from gps_sync.writer import (
     ERRORED_MESSAGE,
-    REGATE_CONDITION,
     assert_targets_writable,
     attribute,
     build_write_lines,
     run_write,
 )
+from gps_sync.writeset import STILL_REGATE
 from tests.support import FakeTransport, at, batch, block_text, marked
 
 APPLIED = "    1 image files updated"
@@ -52,6 +52,42 @@ def blocks_for(lines: list[str]) -> list[list[str]]:
         if line == "-execute":
             groups.append([])
     return [g for g in groups if g]
+
+
+class TestEveryBlockIsShapeCheckedAtEmission:
+    def test_build_write_lines_checks_each_block_it_emits(self, monkeypatch):
+        import gps_sync.writer as writer_module
+
+        checked: list[tuple[str, ...]] = []
+        real = writer_module.assert_block_shape
+        monkeypatch.setattr(
+            writer_module,
+            "assert_block_shape",
+            lambda block: (checked.append(block.lines), real(block))[1],
+        )
+
+        lines = build_write_lines([planned("/m/a.RAF"), planned("/m/b.RAF")], keep_original=False)
+
+        assert [block[-2] for block in map(list, checked)] == ["/m/a.RAF", "/m/b.RAF"]
+        assert [line for block in checked for line in block] == lines
+
+    def test_a_block_carrying_an_undeclared_member_is_refused_before_any_line_is_emitted(
+        self, monkeypatch, tmp_path
+    ):
+        import gps_sync.writer as writer_module
+        from gps_sync.writeset import Assignment
+
+        real = writer_module.assignments
+        monkeypatch.setattr(
+            writer_module,
+            "assignments",
+            lambda *args: (*real(*args), Assignment("Artist", "forged", False)),
+        )
+
+        with pytest.raises(InternalConsistencyError, match="Artist"):
+            run_write(FakeTransport(), [planned("/m/a.RAF")], tmp_path, keep_original=False)
+
+        assert not (tmp_path / "write.args").exists()
 
 
 class TestWriteArgfile:
@@ -153,7 +189,7 @@ class TestWriteArgfile:
         lines = build_write_lines([planned("/m/a.RAF"), planned("/m/b.RAF")], keep_original=False)
 
         for block in blocks_for(lines):
-            assert block[block.index("-if") + 1] == REGATE_CONDITION
+            assert block[block.index("-if") + 1] == STILL_REGATE
             assert "-f" not in block
 
     def test_overwrite_original_is_the_default_and_keep_original_omits_it(self):
@@ -168,7 +204,7 @@ class TestWriteArgfile:
         lines = build_write_lines(targets, keep_original=False)
 
         optionish = [
-            line for line in lines if not line.startswith(("-", "/")) and line != REGATE_CONDITION
+            line for line in lines if not line.startswith(("-", "/")) and line != STILL_REGATE
         ]
         assert optionish == []
         assert [line for line in lines if "fast2" in line] == ["/m/-fast2.RAF"] * 3

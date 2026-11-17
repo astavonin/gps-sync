@@ -2,11 +2,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from gps_sync.classifier import classify
 from gps_sync.model import Failed, FailedReason
 from gps_sync.records import TagRecord
 from gps_sync.timeres import TimeFailure, resolve_instant
-from tests.support import config, index_of, segment, tag_record
+from tests.support import classify, config, index_of, segment, tag_record
 
 TRACK = index_of(segment("t.gpx#trk0seg0", [(0, 42.0, 77.0, 100.0), (600, 42.006, 77.0, 100.0)]))
 
@@ -86,7 +85,11 @@ def test_row4_a_still_with_no_time_tag_fails():
 
 def test_row5_a_utc_native_container_ignores_the_utc_offset_flag():
     record = tag_record(
-        file_type="MP4", date_time_original=None, offset=None, create_date="2026:10:26 03:35:26"
+        file_type="MP4",
+        date_time_original=None,
+        offset=None,
+        create_date="2026:10:26 03:35:26",
+        major_brand="isom",
     )
 
     assert resolved(record, utc_offset=PLUS_SIX) == datetime(2026, 10, 26, 3, 35, 26, tzinfo=UTC)
@@ -126,6 +129,7 @@ def test_fractional_seconds_are_kept():
                 date_time_original=None,
                 offset=None,
                 create_date="2026:10:26 03:59:06",
+                major_brand="isom",
             ),
             None,
         ),

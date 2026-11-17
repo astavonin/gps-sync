@@ -11,18 +11,29 @@ from pathlib import Path
 from gps_sync.errors import InternalConsistencyError, ToolFailure
 
 
+def _is_one_line(path: str) -> bool:
+    """Return whether ``path`` contains no character ``str.splitlines`` treats as a line break.
+
+    That is the set the marker partition splits on, which is wider than newline and carriage
+    return: a path holding a vertical tab, a form feed, a record separator, NEL or a Unicode line
+    separator would be written correctly and then have its echoed marker split into two and
+    mis-attributed.
+    """
+    return path.splitlines() == [path]
+
+
 def path_line(path: str) -> str:
     """Return ``path`` unchanged after proving it is safe to emit as a literal argfile line."""
     if not path.startswith("/"):
         raise InternalConsistencyError(f"refusing to emit non-absolute path {path!r}")
-    if "\n" in path or "\r" in path:
+    if not _is_one_line(path):
         raise InternalConsistencyError(f"refusing to emit path containing a line break: {path!r}")
     return path
 
 
 def is_representable(path: str) -> bool:
     """Return whether a path can travel as a literal argfile line at all."""
-    return path.startswith("/") and "\n" not in path and "\r" not in path
+    return path.startswith("/") and _is_one_line(path)
 
 
 def emit_argfile(destination: Path, lines: Sequence[str]) -> None:

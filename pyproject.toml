@@ -68,12 +68,18 @@ dev = ["mutmut==3.8.1"]
 # blank OffsetTimeOriginal falling through to --utc-offset) was a wrong coordinate or an
 # overwritten position. A surviving mutant here means a test is missing.
 #
+# writeset.py joined the scope after a measured run left no survivor in it. space.py, reader.py and
+# transport.py were measured too and are NOT in scope: they carry 12, 14 and about 105 survivors
+# (transport's subprocess boundary is only reachable from the integration tier, which the gate does
+# not run), and baselining them blind would admit gaps rather than close them.
+#
 # Deliberately NOT in scope: report.py, serialise.py, runrecord.py, summary.py (output labels and
 # serialisation: a wrong label is not a wrong coordinate), and the rest of the package (CLI
 # grammar, discovery, registry, transport plumbing, gpx parsing). Widen source_paths and the
 # baseline together if that judgement changes.
-# tests/unit/test_readme.py reads README.md relative to the copied tree.
-also_copy = ["README.md"]
+# tests/unit/test_readme.py reads README.md, and the mutation-tooling tests read the Makefile, the
+# scripts, .gitignore and the committed baseline, relative to the copied tree.
+also_copy = ["README.md", "Makefile", "scripts", "mutation-baseline.txt", ".gitignore"]
 source_paths = ["src/gps_sync"]
 only_mutate = [
     "src/gps_sync/records.py",
@@ -82,6 +88,8 @@ only_mutate = [
     "src/gps_sync/timeres.py",
     "src/gps_sync/writer.py",
     "src/gps_sync/exitcode.py",
+    "src/gps_sync/telemetry.py",
+    "src/gps_sync/writeset.py",
 ]
 # Unit selector only: the integration and e2e tiers spawn real exiftool over RAW files (~40 s) and
 # would multiply the run by the mutant count. Integration coverage is therefore NOT part of the gate.

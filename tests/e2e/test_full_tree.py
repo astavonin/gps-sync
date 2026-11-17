@@ -176,7 +176,7 @@ def test_extend_recovers_the_near_misses_as_extended_and_never_as_interpolated(t
     assert result.returncode == 0
     summary = record["summary"]
     assert summary["variant_counts"]["Unmatchable"] == 0
-    assert summary["coverage"]["by_via"] == {"INTERPOLATED": 4, "EXTENDED": 2}
+    assert summary["coverage"]["by_via"] == {"INTERPOLATED": 4, "EXTENDED": 2, "CENTROID": 0}
     extended = [f for f in record["files"] if f.get("via") == "EXTENDED"]
     assert len(extended) == 2
     assert all(f["provenance"]["overridden_reason"] == "OUTSIDE_COVERAGE" for f in extended)

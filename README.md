@@ -1,10 +1,10 @@
 # gps-sync
 
-`gps-sync` writes GPS positions from GPX tracks into still photographs that carry none. It is built around one rule: **a position that is already present is never overwritten.**
+`gps-sync` writes GPS positions into still photographs, and with `--video` into MP4 and MOV clips, that carry none. A still's position comes from a GPX track; a clip that carries its own per-sample telemetry (a DJI drone clip) takes the centroid of that telemetry instead. It is built around one rule: **a position that is already present is never overwritten.**
 
 It reads and writes photographs through [exiftool](https://exiftool.org) used strictly as a batched tag reader and writer. All matching (GPX parsing, merging, interpolation, gap limits) is done by `gps-sync` itself, which is what makes a dry run exact: the coordinates a dry run reports are the coordinates a write run applies.
 
-This release handles stills only. Video is out of scope.
+Stills are the default. Video is opt-in with `--video`; without it no video extension is a candidate.
 
 ## Safety guarantees
 
@@ -12,7 +12,7 @@ This release handles stills only. Video is out of scope.
 - **Never overwrite a position.** The decision is made from the file's own metadata (`Composite:GPSPosition`), never from camera make, model, container or directory. A present position, `(0,0)` included, is protected. A file whose metadata could not be read cleanly is *refused*, not assumed empty. The check is repeated by exiftool immediately before each file is modified.
 - **Never fabricate a position.** Interpolation happens only between two trackpoints of the same track segment, independently of `--max-gap`. Two activities recorded close together are never averaged into a place the camera never was.
 - **Every write is recorded.** A write run writes an audit record under `runs/` before the first file is touched and completes it after the last, so an interrupted run is detectable.
-- **Only containers verified byte for byte are written:** RAF and DNG, decided from the file's content and not its extension. Everything else is refused with an explanation. A positionless DNG from a DJI drone is refused in practice, so no such file can be written; see [A DJI DNG is refused whether or not exiftool has rewritten it](#a-dji-dng-is-refused-whether-or-not-exiftool-has-rewritten-it).
+- **Only containers verified byte for byte are written:** RAF and DNG with the EXIF GPS tags, and MP4 and MOV with one `Keys:GPSCoordinates` value, decided from the file's content and not its extension. Everything else is refused with an explanation. A positionless DNG from a DJI drone is refused in practice, so no such file can be written; see [A DJI DNG is refused whether or not exiftool has rewritten it](#a-dji-dng-is-refused-whether-or-not-exiftool-has-rewritten-it).
 
 ## Requirements
 
@@ -34,6 +34,10 @@ gps-sync --media <media-root> --tracks <gpx-root> --write --review-dir <dir>
 
 # keep exiftool's _original copy beside every written file
 gps-sync --media <media-root> --tracks <gpx-root> --write --keep-original
+
+# also admit video: clips with telemetry need no tracks root at all
+gps-sync --media <media-root> --video
+gps-sync --media <media-root> --tracks <gpx-root> --video --write --review-dir <dir>
 ```
 
 Install the `gps-sync` command onto your `PATH` with `pipx`, which gives it its own isolated environment:
@@ -51,12 +55,13 @@ Without installing, run `PYTHONPATH=src python -m gps_sync ...`.
 | Flag | Argument | Default | Effect |
 |---|---|---|---|
 | `--media` | directory | required | Root of the media tree. Resolved once; a symlinked root is followed, symlinks found *inside* the walk are skipped and reported. |
-| `--tracks` | directory | required | Root of the GPX tree. Resolved the same way. |
+| `--tracks` | directory | required without `--video` | Root of the GPX tree. Resolved the same way. Optional with `--video`, where omitting it declares an empty index: nothing is matched against a track. A root that is supplied and holds no GPX file is still a fatal error, so a mistyped path cannot pass for "no tracks". |
+| `--video` | none | off | Admit `.mp4` and `.mov` as candidates. Absent means no video extension is a candidate and the run is a stills run. |
 | `--write` | none | off | Apply writes. Absent means dry-run. |
 | `--max-gap` | duration, zero or more | `120s` | Maximum width of a bracketing interval *within one segment*, inclusive. |
 | `--extend` | duration, zero or more | `0s` | Clamp window for a gap interpolation refused. `0s` disables extension. |
 | `--time-shift` | signed duration | `+0s` | Added to each resolved UTC instant before matching. Never inferred. |
-| `--utc-offset` | `±HH:MM` | none | Offset for local-time stills that carry no `OffsetTimeOriginal`, and nothing else. |
+| `--utc-offset` | `±HH:MM` | none | Offset for local-time stills that carry no `OffsetTimeOriginal`, and nothing else. It is never consulted for a video container. |
 | `--review-dir` | directory | `~/gps-sync/<media>-<digest>` | Parent of `_unprocessed/` and `runs/`. May not be, or contain, the media root; may lie inside it. |
 | `--keep-original` | none | off | Retain exiftool's `_original` copy. |
 | `--json` | none | off | Emit the JSON record on stdout *instead of* the report. |
@@ -94,6 +99,11 @@ Counts per outcome and per reason, a coverage rate, the value of the parameter t
 - `SEGMENT_BOUNDARY` (the camera was used between two activities) and `MAX_GAP_EXCEEDED` (a dropout inside one activity) are never summed, because they need different responses. Raising `--max-gap` does not help a boundary file.
 - **Coverage** is matched files over files that reached the matcher. Already-tagged files and files with no usable time are outside both terms. When nothing reached the matcher (an idempotent re-run) the rate is reported as not applicable, which is the healthy reading.
 - **Clock sensitivity** is the median speed at the matched photo instants and the displacement a 60 s clock error would cause at that speed. It is re-measured on every run because the exposure depends entirely on how you moved: a vehicle at 60 km/h is roughly 40 times a walking pace.
+- **Free space** (a dry run only) prints `Free space a write needs on volume N: P bytes at peak ...; with --keep-original R bytes accumulate`, one line per filesystem holding a planned target. `N` is the operating system's device number for that filesystem (`st_dev`), not a mount name. `P` is the largest single planned target plus 1 MiB, the figure a write checks per file; `R` is the sum of every planned target on that volume, the figure `--keep-original` turns the requirement into. Both are in bytes: divide by 1,000,000,000 for the decimal GB the sections above use. The same figures are the `space_demand` list of the JSON record, which a write run carries too, and of the audit record's verdict.
+- **Telemetry read** (`Telemetry read: N clip(s) in C chunk(s), S s`) appears only when a clip was read for its own telemetry, and is the JSON record's `telemetry_read` object (`clips`, `chunks`, `elapsed_s`, all zero on a run that read none).
+- **Altitude not available** carries a breakout over `NONE_USABLE`, `NOT_CO_INDEXED`, `NOT_REPRESENTABLE` and `GPX_PATH_NO_ELEVATION`; the JSON record's `summary.altitude_unavailable` is an object with `total` and `breakdown`.
+- **Telemetry centroid dispersion** gives the count and the minimum, median and maximum distance of the farthest used fix from the written position, over the clips positioned from their own telemetry. The JSON record always carries it as `summary.centroid_dispersion`, with `null` figures when there were none.
+- **Run-level diagnostics** (`Run-level diagnostic: ...`) name a condition that belongs to the run rather than to a file: no tracks root was given, an elevation was dropped as unrepresentable, the backend concluded about a path the run did not intend, or the block counts did not reconcile. The JSON record's `run_level` object carries one count per condition that fired and is `{}` otherwise, so a consumer that reads only JSON sees them.
 
 Files that were not geotagged are linked under `_unprocessed/<reason>/<path relative to the media root>` so they open directly in Capture One. The folder is rebuilt on every run, including dry runs, and only over entries gps-sync itself created: it will refuse a folder that holds anything else, a marker naming a different media root, or a marker version it does not recognise.
 
@@ -128,7 +138,7 @@ Measured on the test fixtures with exiftool 13.55:
 By default gps-sync writes with `-overwrite_original`: exiftool assembles a new file beside the original and renames it into place. An interruption therefore leaves either the old file or the new one, never a half-written photograph. The cost is that the new file is a *different file* with the same name. Measured on macOS:
 
 - Preserved: POSIX mode and ownership.
-- **Not preserved:** extended attributes (including Finder tags), the creation date, and the inode.
+- **Not preserved:** extended attributes (including Finder tags), the creation date, and the inode (also `kMDItemWhereFroms`). This holds for a video write exactly as for a still: measured on a written clip, only `com.apple.provenance` remained. It is a property of the rename-over write, not of video, and it is not restored afterwards.
 
 `--keep-original` keeps the prior file as `<name>_original`. That copy keeps its own inode and everything attached to it, which makes it the mitigation if your attributes matter. It doubles the footprint of a RAW tree. The `_original` name is never a candidate on a later run.
 
@@ -154,6 +164,21 @@ The audit record names what changed, which makes a run reversible by hand, but n
 
 `Protected` makes no claim about a position's *quality*. gps-sync preserves existing positions unconditionally, including ones measurably worse than the track would compute. On the reference archive 603 camera-geotagged frames carry positions at a median fix age of 329 s (p90 2,625 s, maximum 2.0 h), and 80 of them share one coordinate across 4.3 hours. They all land in `already-tagged/` and nothing distinguishes them from well-tagged files. The tool is not licensed to decide an existing position is wrong; use the fix age or the absence of `GPSDateTime` in the file itself if you need to judge.
 
+## Video
+
+`--video` admits MP4 and MOV containers to the same run, the same report, the same audit record and the same exit code as stills. Each clip takes one of two sources, chosen by the file's own structure: a clip with a `meta` handler track (all 109 DJI MP4 in the reference archive) takes the **centroid of its own telemetry**, and is never matched against the GPX track; every other clip is matched against the track at its start instant, as a still is. The track is not a fallback: a clip whose telemetry yields no usable fix is refused, because the pilot's position is a median 1,035 m and up to 4,620 m from the drone's.
+
+- **A video write rewrites the whole file.** The media payload is relocated and a full-size temporary file is created in the target's own directory, for a change of 99 to 164 bytes. A write therefore needs free space equal to the clip's own size, plus 1 MiB, on the clip's own volume. A clip the volume cannot hold is refused as `WRITE_INSUFFICIENT_SPACE` and the others proceed. A dry run reports the peak a single write needs per volume; `--keep-original` keeps every `_original`, so across the DJI set it would add 78.80 GB.
+- **The position is written to `Keys:GPSCoordinates` as an ISO 6709 value**, signed, with nine decimals and an altitude of four. Nothing is written to `UserData`, `ItemList` or XMP, and the instant is reported and audited but not written into the clip.
+- **A written altitude on a drone clip is the aircraft's altitude**, not the scene's.
+- **A container whose time semantics this project has not verified is refused rather than guessed at** (`TIME_SEMANTICS_UNVERIFIED`). A time that carries an EXIF offset outranks any container atom; a DJI or Android atom is read as UTC only under the `isom` and `mp42` brands; a classic QuickTime atom is not, because the one file that can rule on it is local. `--utc-offset` never stands in.
+- **A clip whose telemetry scan covers less than its own duration is refused** (`TELEMETRY_INCONSISTENT`) rather than positioned from the part that was read. The ceiling is one second.
+- **An elevation the file format cannot hold is dropped, and the position is written without it.** The backend neither refuses nor warns above 4,294,967,295 m or for a non-finite value, so the tool decides before the write; the run reports how many elevations were dropped.
+- **A video already carrying a container position this tool cannot read is refused, not written.** A position written by another tool in a form this one does not parse is never overwritten: its presence is established from the atom itself, not from the derived `Composite:GPSPosition`, which is simply absent for such a payload.
+- **When the backend refuses one assignment of a multi-assignment write, the target has still been rewritten.** `WRITE_PARTIAL` means the position itself was refused and the file does not carry what the run planned (a refused hemisphere reference leaves a position that reads as northern or eastern, which the next run reports as already positioned and never retries). `WRITE_INCOMPLETE` means the position was applied and another assignment was refused. Neither is reachable from user data; each is a defect in this tool and the quoted diagnostic is what to report.
+- **A hidden entry is skipped on every run, including a bare one.** A file or a directory whose name begins with a dot, with its whole subtree, is reported as `HIDDEN_ENTRY` and never walked, so a deliberately hidden photograph is no longer geotagged. A hidden candidate that 001 classified is now an `Ignored` row.
+- **Stated limits.** A clip matched against the track is matched at one instant, which is sound for a clip shot standing still and not for one that moves; the displacement on a moving clip is its own travel and nothing here bounds it. A clip with both telemetry and an EXIF GPS position cannot be told apart from its samples by the second read, which is why the container read, which does see it, runs first.
+
 ## Time
 
 A still's instant comes from `DateTimeOriginal` with `OffsetTimeOriginal`. `CreateDate` is never used for a still, and `GPSDateTime` is never read as an instant source (it records when a paired phone got a fix, not when the shutter fired). A local-time still with no offset tag needs `--utc-offset`; without it the file fails loudly rather than being assigned a zone.
@@ -178,12 +203,13 @@ The fixture corpus is committed and pinned: `testdata/` holds real camera origin
 
 ### Mutation gate
 
-`make mutants` is the check that the suite itself can fail. It runs [mutmut](https://github.com/boxed/mutmut) (declared as the `dev` extra in `pyproject.toml`; install with `.venv/bin/pip install mutmut==3.8.1`, since the project itself is deliberately not installed into the venv; the package has no runtime dependencies) over the path where a defect becomes a wrong coordinate or an overwritten position: `records.py`, `classifier.py`, `matcher.py`, `timeres.py`, `writer.py` and `exitcode.py`. The reporting and serialisation modules (`report.py`, `serialise.py`, `runrecord.py`, `summary.py`) are deliberately out of scope: a wrong label is not a wrong coordinate. The scope and its rationale live in `[tool.mutmut]` in `pyproject.toml`.
+`make mutants` is the check that the suite itself can fail. It runs [mutmut](https://github.com/boxed/mutmut) (declared as the `dev` extra in `pyproject.toml`; install with `.venv/bin/pip install mutmut==3.8.1`, since the project itself is deliberately not installed into the venv; the package has no runtime dependencies) over the path where a defect becomes a wrong coordinate or an overwritten position: `records.py`, `classifier.py`, `matcher.py`, `timeres.py`, `writer.py`, `exitcode.py`, `telemetry.py` and `writeset.py`. The reporting and serialisation modules (`report.py`, `serialise.py`, `runrecord.py`, `summary.py`) are deliberately out of scope: a wrong label is not a wrong coordinate. The scope and its rationale live in `[tool.mutmut]` in `pyproject.toml`.
 
-- **What it does.** `scripts/mutants.sh` starts from a clean `mutants/` working copy, generates about 1,100 mutants (one small source change each) and runs the **unit selector only** against each, with mutmut choosing just the tests that cover the mutated function. The integration and e2e tiers are not part of the gate because they spawn real exiftool and would multiply the run by the mutant count. It takes about 30 seconds on a 14-core machine (about 3 minutes of CPU).
-- **Pass condition.** No surviving mutant outside `mutation-baseline.txt`. A survivor means no test notices that change. The baseline lists the survivors that are accepted, one per line with a category and a reason: `GENUINE-GAP` (a behaviour no test pins; write the test, then delete the line), `EQUIVALENT` (the mutant behaves identically) or `BENIGN` (only a report label or a fail-safe edge changes). Baseline entries that no longer survive are listed as stale and do not fail the run.
+- **What it does.** `scripts/mutants.sh` starts from a clean `mutants/` working copy, generates about 1,900 mutants (one small source change each) and runs the **unit selector only** against each, with mutmut choosing just the tests that cover the mutated function. The integration and e2e tiers are not part of the gate because they spawn real exiftool and would multiply the run by the mutant count. It takes about 45 seconds of wall time on a 14-core machine.
+- **Pass condition.** Every mutant `mutmut results` lists is placed in one of three classes by its status, and the gate fails on the first or the third. *Survived*: no test notices the change; it must be admitted by `mutation-baseline.txt` (below), and none is admitted in `telemetry.py`. *Treated as detected*: `timeout`, a mutant that hangs the suite; it passes with a `note:` line per name, up to a budget of 25 per run (`TIMEOUT_BUDGET`), because a timeout is load-dependent and a mutant killed on a quiet machine can time out on a busy one; one in `telemetry.py` fails whatever the budget. *Never evaluated*: `no tests`, `not checked`, `skipped`, `check was interrupted by user`, `suspicious`, `segfault`, `caught by type check`, and any status the script does not know; each fails with a `FAIL:` line naming the mutant, because no test ever judged it (an uncovered helper in `writeset.py`, or an interrupted run, produces exactly these). The run also fails unless `survived + undetermined + killed` equals the total `mutmut` reports and the total is above zero, so a truncated run is loud. A survivor is admitted by a baseline entry carrying a category and a reason: `GENUINE-GAP` (a behaviour no test pins; write the test, then delete the line), `EQUIVALENT` (the mutant behaves identically) or `BENIGN` (only a report label or a fail-safe edge changes). An entry whose category is missing or `UNCLASSIFIED` fails the gate. Baseline entries that no longer survive are listed as stale and do not fail the run.
+- **Entry identity.** An entry is `<name>  <diff digest>  <function digest>  # CATEGORY: reason`. The digests make an entry renumber-proof and make an edit visible: a justification is inherited only by an identical mutant of an identical function, never by name. A legacy name-only entry is honoured only while its function is byte for byte what was committed.
 - **Reading a failure.** The run prints the new survivors by name. `.venv/bin/mutmut show <name>` prints the exact diff, and `.venv/bin/mutmut tests-for-mutant <name>` lists the tests that ran against it. Either write a test that fails on the mutant, or accept it with a reason (next point).
-- **Accepting a survivor.** Run `make mutants-baseline`, which rewrites `mutation-baseline.txt` to the current survivor set, keeps existing reasons and marks new entries `UNCLASSIFIED`. Replace each `UNCLASSIFIED` with a category and reason before committing. Mutants are numbered per function in source order, so editing a function renumbers its mutants: re-run `make mutants-baseline` after such an edit and re-check the reasons.
+- **Accepting a survivor.** Run `make mutants-propose`. It writes a *candidate* baseline to `mutation-baseline.candidate.txt` and never touches `mutation-baseline.txt`; it carries justifications forward by identity, marks the rest `UNCLASSIFIED`, and exits non-zero while any entry lacks a justification written against the current source, or any survivor sits in a function unchanged since the commit (which is a regression, not something to justify). Edit the candidate, re-run `make mutants-propose` until it passes, then `make mutants-promote` replaces the committed baseline and prints the diff. Promotion is refused unless the candidate passed the check and has not changed since. There is deliberately no target that rewrites the baseline in place.
 - **Noise.** A mutant that only rarely survives can flip between killed and survived from run to run; re-run before concluding anything about a single line.
 - **Safety.** The run works in `mutants/` (git-ignored), links `testdata/` into it rather than copying 353 MB, and fails if any file under `testdata/` changes during the run.
 

@@ -35,7 +35,7 @@ def test_video_is_ignored_as_not_a_still_for_issue_001(tmp_path):
     }
 
 
-@pytest.mark.parametrize("name", [".DS_Store", "a.xmp", "notes.txt", "noext", "a.RAF.xmp"])
+@pytest.mark.parametrize("name", ["a.xmp", "notes.txt", "noext", "a.RAF.xmp"])
 def test_sidecars_and_system_files_are_ignored_silently_never_failed(tmp_path, name):
     touch(tmp_path / name)
 
@@ -188,3 +188,74 @@ def test_an_unreadable_subdirectory_is_a_tool_failure_rather_than_a_silent_hole(
             discover(tmp_path, frozenset())
     finally:
         locked.chmod(0o755)
+
+
+@pytest.mark.parametrize("name", ["a.mp4", "a.MP4", "a.mov", "a.MOV", "a.Mov"])
+def test_video_extensions_are_candidates_only_under_the_video_flag(tmp_path, name):
+    touch(tmp_path / name)
+
+    admitted = discover(tmp_path, frozenset(), video=True)
+    bare = discover(tmp_path, frozenset())
+
+    assert admitted.candidates == (str(tmp_path / name),)
+    assert bare.candidates == ()
+    assert reasons(bare) == {name: IgnoredReason.NOT_A_STILL}
+
+
+@pytest.mark.parametrize("name", ["a.m4v", "a.avi", "a.mkv", "a.lrf", "a.mp4.xmp"])
+def test_other_video_extensions_stay_ignored_even_under_the_video_flag(tmp_path, name):
+    touch(tmp_path / name)
+
+    result = discover(tmp_path, frozenset(), video=True)
+
+    assert result.candidates == ()
+    assert reasons(result) == {name: IgnoredReason.NOT_A_STILL}
+
+
+@pytest.mark.parametrize("video", [False, True])
+@pytest.mark.parametrize("name", [".DS_Store", ".hidden.RAF", "._DSCF1234.RAF", ".DSCF3226.MOV"])
+def test_a_hidden_file_is_skipped_under_its_own_reason_on_both_flag_states(tmp_path, name, video):
+    touch(tmp_path / name)
+
+    result = discover(tmp_path, frozenset(), video=video)
+
+    assert result.candidates == ()
+    assert reasons(result) == {name: IgnoredReason.HIDDEN_ENTRY}
+
+
+@pytest.mark.parametrize("video", [False, True])
+def test_a_hidden_directory_is_reported_once_and_its_subtree_is_not_walked(tmp_path, video):
+    touch(tmp_path / ".Spotlight-V100" / "deep" / "a.RAF")
+    touch(tmp_path / "kept.RAF")
+
+    result = discover(tmp_path, frozenset(), video=video)
+
+    assert result.candidates == (str(tmp_path / "kept.RAF"),)
+    assert reasons(result) == {".Spotlight-V100": IgnoredReason.HIDDEN_ENTRY}
+
+
+def test_a_hidden_symlink_is_still_reported_as_a_symlink(tmp_path):
+    touch(tmp_path / "real.RAF")
+    (tmp_path / ".link.RAF").symlink_to(tmp_path / "real.RAF")
+
+    result = discover(tmp_path, frozenset())
+
+    assert reasons(result)[".link.RAF"] is IgnoredReason.SYMLINK
+
+
+def test_a_pruned_run_artifact_root_with_a_leading_dot_is_reported_as_pruned_not_hidden(tmp_path):
+    root = tmp_path / ".gps-sync"
+    touch(root / "a.RAF")
+
+    result = discover(tmp_path, frozenset({root}))
+
+    assert result.pruned == (str(root),)
+    assert reasons(result) == {}
+
+
+def test_a_dot_inside_the_name_does_not_make_an_entry_hidden(tmp_path):
+    touch(tmp_path / "a.b.RAF")
+
+    result = discover(tmp_path, frozenset())
+
+    assert result.candidates == (str(tmp_path / "a.b.RAF"),)

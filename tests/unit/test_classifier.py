@@ -4,7 +4,6 @@ from typing import ClassVar
 
 import pytest
 
-from gps_sync.classifier import classify
 from gps_sync.geo import haversine_m
 from gps_sync.model import (
     Failed,
@@ -17,7 +16,7 @@ from gps_sync.model import (
     UnmatchableReason,
     Via,
 )
-from tests.support import T0, at, config, index_of, segment, tag_record
+from tests.support import T0, at, classify, config, index_of, segment, tag_record
 
 SEG = "t.gpx#trk0seg0"
 # The default record's local time 10:00:30 at +06:00 is 04:00:30 UTC, i.e. 30 s after T0.
@@ -367,6 +366,7 @@ class TestTimeShift:
             date_time_original=None,
             offset=None,
             create_date="2026:10:26 04:03:20",
+            major_brand="isom",
             file_type="MP4",
         )
 
@@ -397,3 +397,39 @@ class TestTimeShift:
         outcome = classify(self.record_at(500 + 300), index, config())
 
         assert isinstance(outcome, Unmatchable)
+
+
+class TestAProtectedFileWithNoResolvableInstantKeepsTheReason:
+    def zoneless_positioned(self):
+        return tag_record(
+            gps="42.5 78.25",
+            date_time_original=None,
+            offset=None,
+            file_type="MOV",
+            create_date="2026:10:26 04:00:30",
+            major_brand="qt",
+        )
+
+    def test_the_time_failure_detail_is_carried_beside_the_absent_instant(self):
+        outcome = classify(self.zoneless_positioned(), TRACK, config())
+
+        assert isinstance(outcome, Protected)
+        assert outcome.reason is ProtectedReason.POSITION_PRESENT
+        assert outcome.instant is None
+        assert outcome.detail is not None
+        assert "no zone this project can verify" in outcome.detail
+
+    def test_it_reaches_the_json_record_and_the_report_line(self):
+        from gps_sync.report import file_line
+        from gps_sync.serialise import outcome_to_dict
+
+        outcome = classify(self.zoneless_positioned(), TRACK, config())
+
+        assert "no zone this project can verify" in outcome_to_dict(outcome)["detail"]
+        assert ", no instant: the container's creation time has no zone" in file_line(outcome)
+
+    def test_a_protected_file_whose_instant_resolved_carries_no_detail(self):
+        outcome = classify(tag_record(gps="42.5 78.25"), TRACK, config())
+
+        assert isinstance(outcome, Protected) and outcome.instant is not None
+        assert outcome.detail is None

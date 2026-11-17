@@ -5,115 +5,38 @@
 #   EQUIVALENT   the mutant behaves identically to the original
 #   BENIGN       changes only a report label/field or a fail-safe edge; no wrong coordinate or write
 #
-# The gate (scripts/mutants.sh) fails on any survivor NOT listed here. A listed mutant that is
-# later killed is reported as stale. Mutant names are numbered per function in source order, so
-# editing a function renumbers its mutants: re-run `make mutants-baseline` and re-check reasons.
+# The gate (scripts/mutants.sh) fails on any survivor NOT listed here, on an entry whose category is
+# missing or UNCLASSIFIED, and on any survivor in telemetry.py. A listed mutant that is later killed
+# is reported as stale. Mutant names are numbered per function in source order, so an entry is also
+# identified by `<diff digest>  <function digest>` (see `make mutants-propose`); an entry without
+# digests is honoured only while its function is unchanged since the commit. Never edit this file
+# to admit a survivor: run `make mutants-propose`, classify the candidate, then `make mutants-promote`.
 # Gate scope and the unit-tier selection are documented beside [tool.mutmut] in pyproject.toml.
 
-gps_sync.classifier.x__after_match__mutmut_10  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__after_match__mutmut_11  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__after_match__mutmut_18  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__after_match__mutmut_19  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__after_match__mutmut_25  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__after_match__mutmut_4  # BENIGN: path of a container-refusal Failed outcome not asserted at unit level; killed by the integration tier
-gps_sync.classifier.x__container_refusal__mutmut_10  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_11  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_12  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect) (killed by the integration tier)
-gps_sync.classifier.x__container_refusal__mutmut_13  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_14  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_15  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_19  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect) (killed by the integration tier)
-gps_sync.classifier.x__container_refusal__mutmut_20  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_21  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_22  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__container_refusal__mutmut_23  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x__gate__mutmut_19  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x__gate__mutmut_4  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_2  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_21  # BENIGN: zero test or-ed: a position with one zero coordinate is labelled ZERO_POSITION; both reasons are Protected
-gps_sync.classifier.x_classify__mutmut_3  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_30  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_35  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_41  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_42  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_46  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_47  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_52  # BENIGN: diagnostic wording not asserted (no coordinate effect) (killed by the integration tier)
-gps_sync.classifier.x_classify__mutmut_53  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_56  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect) (killed by the integration tier)
-gps_sync.classifier.x_classify__mutmut_57  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_72  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect) (killed by the integration tier)
-gps_sync.classifier.x_classify__mutmut_73  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_74  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_80  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_81  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.classifier.x_classify__mutmut_82  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__clamp_speed__mutmut_3  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__clamp_speed__mutmut_6  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__position__mutmut_3  # GENUINE-GAP: elevation dropped on exact-hit and clamped positions; only the integration tier kills it
-gps_sync.matcher.x__position__mutmut_6  # GENUINE-GAP: elevation dropped on exact-hit and clamped positions; only the integration tier kills it
-gps_sync.matcher.x__refuse_or_clamp_bracket__mutmut_20  # GENUINE-GAP: --extend boundary: a miss exactly equal to the limit is refused instead of clamped (fail-safe direction)
-gps_sync.matcher.x__refuse_or_clamp_bracket__mutmut_34  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__refuse_or_clamp_bracket__mutmut_36  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_11  # EQUIVALENT: extend >= 0: with extend == 0 the miss is positive here, so the clamp test stays false
-gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_15  # GENUINE-GAP: --extend boundary: a miss exactly equal to the limit is refused instead of clamped (fail-safe direction)
-gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_20  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_27  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.matcher.x__speed__mutmut_5  # BENIGN: 1 s bracket reports no speed; 0 s is guarded upstream by the exact-hit branch (speed is a report field)
-gps_sync.matcher.x_match__mutmut_117  # EQUIVALENT: extend is unused when clamp_allowed is False
-gps_sync.matcher.x_match__mutmut_118  # EQUIVALENT: clamp_allowed=None is falsy, identical to False
-gps_sync.matcher.x_match__mutmut_159  # BENIGN: interpolation provenance segment not asserted (label only)
-gps_sync.matcher.x_match__mutmut_70  # EQUIVALENT: at_start=None is falsy, identical to False
-gps_sync.records.x__tags_by_name__mutmut_11  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.records.x__tags_by_name__mutmut_12  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.records.x__tags_by_name__mutmut_13  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.records.x__tags_by_name__mutmut_18  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.records.x__tags_by_name__mutmut_19  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.records.x__tags_by_name__mutmut_40  # EQUIVALENT: sorted(items, key=None): tuples already order by rank first, ranks are unique per tag
-gps_sync.records.x__tags_by_name__mutmut_42  # EQUIVALENT: sorted(items) without key: tuples already order by rank first, ranks are unique per tag
-gps_sync.records.x__tags_by_name__mutmut_9  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.records.x_parse_gps_position__mutmut_14  # BENIGN: a lone infinite coordinate parses as a position: gate reads Present (Protected) instead of Indeterminate, neither writes
-gps_sync.records.x_parse_gps_position__mutmut_15  # BENIGN: a lone infinite coordinate parses as a position: gate reads Present (Protected) instead of Indeterminate, neither writes
-gps_sync.records.x_parse_gps_position__mutmut_16  # EQUIVALENT: NaN cannot reach here: the number regex rejects it
-gps_sync.records.x_parse_gps_position__mutmut_23  # EQUIVALENT: float('INF') equals float('inf')
-gps_sync.records.x_parse_gps_position__mutmut_28  # EQUIVALENT: float('INF') equals float('inf')
-gps_sync.records.xǁTagRecordǁfrom_json__mutmut_45  # BENIGN: raw text of an unparseable position dropped from the diagnostic; has_gps_key still carries the gate
-gps_sync.timeres.x__parse_naive__mutmut_17  # EQUIVALENT: 1000001 vs 1000000 microseconds per second changes the result only for fractions above .999999
-gps_sync.timeres.x_resolve_instant__mutmut_10  # GENUINE-GAP: allow_z=None: a Z-suffixed QuickTime CreateDate is refused as malformed; no test accepts one (fail-safe direction)
-gps_sync.timeres.x_resolve_instant__mutmut_13  # GENUINE-GAP: allow_z=False: a Z-suffixed QuickTime CreateDate is refused as malformed; no test accepts one (fail-safe direction)
-gps_sync.timeres.x_resolve_instant__mutmut_15  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.timeres.x_resolve_instant__mutmut_20  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.timeres.x_resolve_instant__mutmut_25  # EQUIVALENT: allow_z=None is falsy, identical to False
-gps_sync.timeres.x_resolve_instant__mutmut_34  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.timeres.x_resolve_instant__mutmut_35  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.timeres.x_resolve_instant__mutmut_44  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.timeres.x_resolve_instant__mutmut_5  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.writer.x__block_lines__mutmut_12  # BENIGN: -n -> -N: survives real-exiftool round trips; print-conversion switch not observed on the written tags
-gps_sync.writer.x__conclude__mutmut_12  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_13  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_22  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_31  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_32  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_39  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_44  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_47  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_48  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_51  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_54  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_55  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_64  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.writer.x__conclude__mutmut_65  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_12  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_15  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_16  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_4  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_7  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x__failed__mutmut_8  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x_assert_targets_writable__mutmut_13  # GENUINE-GAP: re-check on a target with no context raises AttributeError instead of InternalConsistencyError (still aborts before any write)
-gps_sync.writer.x_attribute__mutmut_22  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.writer.x_attribute__mutmut_42  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x_attribute__mutmut_44  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x_attribute__mutmut_45  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x_attribute__mutmut_46  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
-gps_sync.writer.x_run_write__mutmut_3  # BENIGN: diagnostic wording not asserted (no coordinate effect)
-gps_sync.writer.x_run_write__mutmut_4  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__clamp_speed__mutmut_3  234185d10c49  405d897ed217  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__clamp_speed__mutmut_6  08b8cad19acb  405d897ed217  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__refuse_or_clamp_bracket__mutmut_34  6122926f3113  30344b7ff448  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__refuse_or_clamp_bracket__mutmut_36  4eaee9dc5338  30344b7ff448  # BENIGN: diagnostic wording not asserted (no coordinate effect)
+gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_11  cddd350f72f9  f1c3cdfa3bd9  # EQUIVALENT: extend >= 0: with extend == 0 the miss is positive here, so the clamp test stays false
+gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_15  42f5697a4161  f1c3cdfa3bd9  # GENUINE-GAP: --extend boundary: a miss exactly equal to the limit is refused instead of clamped (fail-safe direction)
+gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_20  02b0a5f83679  f1c3cdfa3bd9  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__refuse_or_clamp_outer__mutmut_27  f449e1a81e49  f1c3cdfa3bd9  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.matcher.x__speed__mutmut_5  58220ef2bddc  020b5cf99657  # BENIGN: 1 s bracket reports no speed; 0 s is guarded upstream by the exact-hit branch (speed is a report field)
+gps_sync.matcher.x_match__mutmut_117  aa1dc6e4f50a  128e7bc57047  # EQUIVALENT: extend is unused when clamp_allowed is False
+gps_sync.matcher.x_match__mutmut_118  d01188a51d68  128e7bc57047  # EQUIVALENT: clamp_allowed=None is falsy, identical to False
+gps_sync.matcher.x_match__mutmut_70  86e03be44eef  128e7bc57047  # EQUIVALENT: at_start=None is falsy, identical to False
+gps_sync.records.x__tags_by_name__mutmut_11  c710ecc4bc95  56d7dc93f62f  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.records.x__tags_by_name__mutmut_12  efcfc4cde987  56d7dc93f62f  # BENIGN: diagnostic wording not asserted (no coordinate effect)
+gps_sync.records.x__tags_by_name__mutmut_13  0b472893b00a  56d7dc93f62f  # BENIGN: diagnostic wording not asserted (no coordinate effect)
+gps_sync.records.x__tags_by_name__mutmut_18  c7e9172145eb  56d7dc93f62f  # BENIGN: diagnostic wording not asserted (no coordinate effect)
+gps_sync.records.x__tags_by_name__mutmut_19  9c735f665923  56d7dc93f62f  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.records.x__tags_by_name__mutmut_40  d28098091f97  56d7dc93f62f  # EQUIVALENT: sorted(items, key=None): tuples already order by rank first, ranks are unique per tag
+gps_sync.records.x__tags_by_name__mutmut_42  0657eb635172  56d7dc93f62f  # EQUIVALENT: sorted(items) without key: tuples already order by rank first, ranks are unique per tag
+gps_sync.records.x__tags_by_name__mutmut_9  815e1b041b3f  56d7dc93f62f  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)
+gps_sync.records.x_parse_gps_position__mutmut_14  3bc8f45ee05d  4cea5f6f9e48  # BENIGN: a lone infinite coordinate parses as a position: gate reads Present (Protected) instead of Indeterminate, neither writes
+gps_sync.records.x_parse_gps_position__mutmut_15  3697af819c62  4cea5f6f9e48  # BENIGN: a lone infinite coordinate parses as a position: gate reads Present (Protected) instead of Indeterminate, neither writes
+gps_sync.records.x_parse_gps_position__mutmut_16  943a7f1efc05  4cea5f6f9e48  # EQUIVALENT: NaN cannot reach here: the number regex rejects it
+gps_sync.records.x_parse_gps_position__mutmut_23  946b2076f6d4  4cea5f6f9e48  # EQUIVALENT: float('INF') equals float('inf')
+gps_sync.records.x_parse_gps_position__mutmut_28  1aeb2ba5ae29  4cea5f6f9e48  # EQUIVALENT: float('INF') equals float('inf')
+gps_sync.writer.x_run_write__mutmut_3  3c9054ba2223  75acf611b743  # BENIGN: diagnostic wording not asserted (no coordinate effect)
+gps_sync.writer.x_run_write__mutmut_4  67941858d31b  75acf611b743  # BENIGN: report field (context/instant/bracket/detail) not asserted (no coordinate effect)

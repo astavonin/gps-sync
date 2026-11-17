@@ -5,23 +5,26 @@ design states for the optional payload fields are enforced at construction, so a
 violates them cannot exist.
 """
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Never
+from typing import Any, Never
 
 
 class Via(StrEnum):
-    """How a position was derived. Open enumeration: issue 002 adds a third value."""
+    """How a position was derived; every member needs a row in ``VIA_SPECS``."""
 
     INTERPOLATED = "INTERPOLATED"
     EXTENDED = "EXTENDED"
+    CENTROID = "CENTROID"
 
 
 class IgnoredReason(StrEnum):
     """Why an entry never became a candidate."""
 
     NOT_A_STILL = "NOT_A_STILL"
+    HIDDEN_ENTRY = "HIDDEN_ENTRY"
     SYMLINK = "SYMLINK"
     DUPLICATE_INODE = "DUPLICATE_INODE"
 
@@ -52,6 +55,13 @@ class FailedReason(StrEnum):
     WRITE_UNSUPPORTED_CONTAINER = "WRITE_UNSUPPORTED_CONTAINER"
     WRITE_ERROR = "WRITE_ERROR"
     WRITE_UNATTRIBUTED = "WRITE_UNATTRIBUTED"
+    WRITE_PARTIAL = "WRITE_PARTIAL"
+    WRITE_INCOMPLETE = "WRITE_INCOMPLETE"
+    TIME_SEMANTICS_UNVERIFIED = "TIME_SEMANTICS_UNVERIFIED"
+    TELEMETRY_UNUSABLE = "TELEMETRY_UNUSABLE"
+    TELEMETRY_INCONSISTENT = "TELEMETRY_INCONSISTENT"
+    WRITE_INSUFFICIENT_SPACE = "WRITE_INSUFFICIENT_SPACE"
+    WRITE_TARGET_UNEXAMINABLE = "WRITE_TARGET_UNEXAMINABLE"
 
 
 class SuccessState(StrEnum):
@@ -65,6 +75,9 @@ class RunLevelReason(StrEnum):
     """Reasons that attach to the run rather than to a candidate."""
 
     WRITE_UNINTENDED_PATH = "WRITE_UNINTENDED_PATH"
+    NO_TRACKS_ROOT_FOR_MATCHED_CANDIDATES = "NO_TRACKS_ROOT_FOR_MATCHED_CANDIDATES"
+    ELEVATION_NOT_REPRESENTABLE = "ELEVATION_NOT_REPRESENTABLE"
+    BLOCK_COUNT_UNRECONCILED = "BLOCK_COUNT_UNRECONCILED"
 
 
 ReasonKey = (
@@ -82,6 +95,10 @@ FAILED_AFTER_MATCH = frozenset(
         FailedReason.WRITE_UNSUPPORTED_CONTAINER,
         FailedReason.WRITE_ERROR,
         FailedReason.WRITE_UNATTRIBUTED,
+        FailedReason.WRITE_PARTIAL,
+        FailedReason.WRITE_INCOMPLETE,
+        FailedReason.WRITE_INSUFFICIENT_SPACE,
+        FailedReason.WRITE_TARGET_UNEXAMINABLE,
     }
 )
 
@@ -117,7 +134,133 @@ class Extended:
     overridden_reason: UnmatchableReason
 
 
-Provenance = Interpolated | Extended
+class AggregationRule(StrEnum):
+    """The rule a centroid was aggregated by, declared so a later variant stays distinguishable."""
+
+    ARITHMETIC_MEAN = "ARITHMETIC_MEAN"
+
+
+class AltitudeOutcome(StrEnum):
+    """The altitude tag a centroid's elevation was taken over, or why none was derived."""
+
+    ABSOLUTE_ALTITUDE = "ABSOLUTE_ALTITUDE"
+    NONE_USABLE = "NONE_USABLE"
+    NOT_CO_INDEXED = "NOT_CO_INDEXED"
+    NOT_REPRESENTABLE = "NOT_REPRESENTABLE"
+
+
+class SampleRejection(StrEnum):
+    """Why one telemetry sample was not used as a fix."""
+
+    UNPARSEABLE = "UNPARSEABLE"
+    OUT_OF_RANGE = "OUT_OF_RANGE"
+    ZERO_SENTINEL = "ZERO_SENTINEL"
+
+
+@dataclass(frozen=True, slots=True)
+class AggregationSpec:
+    """One row of the aggregation table: how a rule is named where a reader sees it."""
+
+    phrase: str
+
+
+@dataclass(frozen=True, slots=True)
+class AltitudeSpec:
+    """One row of the altitude table: whether a file with this outcome lacks an elevation."""
+
+    unavailable: bool
+
+
+@dataclass(frozen=True, slots=True)
+class RejectionSpec:
+    """One row of the rejection table: how a dropped sample's reason is named for a reader."""
+
+    phrase: str
+
+
+#: The GPX path's own term of the unavailable-altitude breakdown. It is not a member of
+#: ``AltitudeOutcome`` because that enumeration lives on ``Centroid`` alone.
+GPX_PATH_NO_ELEVATION = "GPX_PATH_NO_ELEVATION"
+
+AGGREGATION_SPECS: dict[AggregationRule, AggregationSpec] = {
+    AggregationRule.ARITHMETIC_MEAN: AggregationSpec("mean"),
+}
+
+ALTITUDE_SPECS: dict[AltitudeOutcome, AltitudeSpec] = {
+    AltitudeOutcome.ABSOLUTE_ALTITUDE: AltitudeSpec(unavailable=False),
+    AltitudeOutcome.NONE_USABLE: AltitudeSpec(unavailable=True),
+    AltitudeOutcome.NOT_CO_INDEXED: AltitudeSpec(unavailable=True),
+    AltitudeOutcome.NOT_REPRESENTABLE: AltitudeSpec(unavailable=True),
+}
+
+REJECTION_SPECS: dict[SampleRejection, RejectionSpec] = {
+    SampleRejection.UNPARSEABLE: RejectionSpec("unparseable"),
+    SampleRejection.OUT_OF_RANGE: RejectionSpec("out of range"),
+    SampleRejection.ZERO_SENTINEL: RejectionSpec("zero sentinel"),
+}
+
+
+def _assert_total(table_name: str, members: Iterable[StrEnum], table: Mapping[Any, object]) -> None:
+    """Refuse import when a declared enumeration has a member its table has no row for."""
+    missing = [member for member in members if member not in table]
+    if missing:
+        raise RuntimeError(f"the {table_name} table has no row for: {missing}")
+
+
+_assert_total("aggregation", AggregationRule, AGGREGATION_SPECS)
+_assert_total("altitude", AltitudeOutcome, ALTITUDE_SPECS)
+_assert_total("rejection", SampleRejection, REJECTION_SPECS)
+
+
+@dataclass(frozen=True, slots=True)
+class Centroid:
+    """Provenance of a position averaged over a clip's own telemetry fixes.
+
+    ``dropped`` holds one count per rejection reason in enumeration order, so ``samples_used``
+    plus its sum is always ``samples_read``. ``span_s`` is the span of every sample the read
+    returned and ``shortfall_s`` its shortfall against the clip's own duration.
+    """
+
+    samples_read: int
+    samples_used: int
+    dropped: tuple[tuple[SampleRejection, int], ...]
+    span_s: float
+    shortfall_s: float
+    rule: AggregationRule
+    spread_m: float
+    altitude: AltitudeOutcome
+
+
+Provenance = Interpolated | Extended | Centroid
+
+
+@dataclass(frozen=True, slots=True)
+class ViaSpec:
+    """One row of the ``via`` table: the provenance shape and the figures it may enter."""
+
+    provenance: type[Provenance]
+    bracket_speed_admitted: bool
+    fold_admitted: bool
+    exclusion_key: str | None
+
+
+#: The single declaring mapping for ``via``; ``_assert_via_table`` refuses import on a missing row.
+VIA_SPECS: dict[Via, ViaSpec] = {
+    Via.INTERPOLATED: ViaSpec(Interpolated, True, True, None),
+    Via.EXTENDED: ViaSpec(Extended, True, False, "extended"),
+    Via.CENTROID: ViaSpec(Centroid, False, False, "centroid"),
+}
+
+
+def _assert_via_table() -> None:
+    missing = [via for via in Via if via not in VIA_SPECS]
+    if missing:
+        raise RuntimeError(f"the via table has no row for: {missing}")
+    if any(spec.fold_admitted == (spec.exclusion_key is not None) for spec in VIA_SPECS.values()):
+        raise RuntimeError("a via row must be fold-admitted or name its exclusion key, never both")
+
+
+_assert_via_table()
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,9 +282,11 @@ def _check_match_payload(
     if present:
         if via is None or provenance is None:
             raise ValueError("match payload (via and provenance) is required here")
-        expected = Interpolated if via is Via.INTERPOLATED else Extended
-        if not isinstance(provenance, expected):
+        spec = VIA_SPECS[via]
+        if not isinstance(provenance, spec.provenance):
             raise ValueError(f"provenance {type(provenance).__name__} does not match via {via}")
+        if bracket_speed is not None and not spec.bracket_speed_admitted:
+            raise ValueError(f"a {via} outcome carries no bracket speed")
     elif via is not None or provenance is not None or bracket_speed is not None:
         raise ValueError("match payload must be absent here")
 
@@ -157,7 +302,11 @@ class Ignored:
 
 @dataclass(frozen=True, slots=True)
 class Protected:
-    """A file carrying a position, or one that gained a position mid-run; never written."""
+    """A file carrying a position, or one that gained a position mid-run; never written.
+
+    ``detail`` says why no instant is carried when the time evidence could not be resolved: a file
+    that is protected needs no instant, but the reason it has none is still a finding about it.
+    """
 
     path: str
     reason: ProtectedReason
@@ -167,6 +316,7 @@ class Protected:
     provenance: Provenance | None = None
     bracket_speed: float | None = None
     context: FileContext | None = None
+    detail: str | None = None
 
     def __post_init__(self) -> None:
         appeared = self.reason is ProtectedReason.POSITION_APPEARED
@@ -231,6 +381,7 @@ class Planned:
     provenance: Provenance
     bracket_speed: float | None = None
     context: FileContext | None = None
+    elevation_dropped: bool = False
 
     def __post_init__(self) -> None:
         _check_match_payload(self.via, self.provenance, self.bracket_speed, present=True)
@@ -247,6 +398,7 @@ class Geotagged:
     provenance: Provenance
     bracket_speed: float | None = None
     context: FileContext | None = None
+    elevation_dropped: bool = False
 
     def __post_init__(self) -> None:
         _check_match_payload(self.via, self.provenance, self.bracket_speed, present=True)

@@ -21,7 +21,14 @@ from gps_sync.model import (
     Via,
     reason_key,
 )
-from gps_sync.registry import REGISTRY, review_subfolders, spec
+from gps_sync.registry import (
+    NOT_APPLICABLE,
+    PRINTED,
+    REGISTRY,
+    SUPPRESSED,
+    review_subfolders,
+    spec,
+)
 from gps_sync.writer import Reconciliation, UnintendedConclusion
 from tests.support import at
 
@@ -39,8 +46,8 @@ ALL_REASON_ENUMS = (
 )
 
 
-# Rows with nothing to remedy: a file that is not a candidate, and the two success states.
-REMEDY_FREE = frozenset({IgnoredReason.NOT_A_STILL, SuccessState.PLANNED, SuccessState.GEOTAGGED})
+# Rows with nothing to remedy: the two success states.
+REMEDY_FREE = frozenset({SuccessState.PLANNED, SuccessState.GEOTAGGED})
 
 
 class TestRegistryCompleteness:
@@ -48,7 +55,7 @@ class TestRegistryCompleteness:
         members = [m for enum in ALL_REASON_ENUMS for m in enum]
 
         assert [m for m in members if m not in REGISTRY] == []
-        assert len(REGISTRY) == len(members) == 19
+        assert len(REGISTRY) == len(members) == 30
 
     def test_every_row_declares_all_five_renderings(self):
         for key, row in REGISTRY.items():
@@ -60,6 +67,30 @@ class TestRegistryCompleteness:
                 assert row.remedy is None, key
             else:
                 assert row.remedy and row.remedy.strip(), key
+
+    def test_every_row_declares_one_of_the_three_per_file_line_policies(self):
+        assert {row.per_file_lines for row in REGISTRY.values()} <= {
+            PRINTED,
+            SUPPRESSED,
+            NOT_APPLICABLE,
+        }
+
+    def test_the_per_file_line_policy_of_every_row_is_pinned(self):
+        expected = {
+            IgnoredReason.NOT_A_STILL: SUPPRESSED,
+            IgnoredReason.HIDDEN_ENTRY: SUPPRESSED,
+            RunLevelReason.NO_TRACKS_ROOT_FOR_MATCHED_CANDIDATES: NOT_APPLICABLE,
+            RunLevelReason.ELEVATION_NOT_REPRESENTABLE: NOT_APPLICABLE,
+            RunLevelReason.BLOCK_COUNT_UNRECONCILED: NOT_APPLICABLE,
+            RunLevelReason.WRITE_UNINTENDED_PATH: NOT_APPLICABLE,
+        }
+
+        actual = {key: row.per_file_lines for key, row in REGISTRY.items() if key in expected}
+        printed = {key for key, row in REGISTRY.items() if row.per_file_lines == PRINTED}
+
+        assert actual == expected
+        assert printed == set(REGISTRY) - set(expected)
+        assert {k for k, row in REGISTRY.items() if row.variant == "run-level"} <= set(expected)
 
     def test_the_stable_json_string_is_the_reason_name_verbatim_over_the_whole_registry(self):
         assert {key.name: row.json for key, row in REGISTRY.items()} == {
@@ -91,8 +122,13 @@ class TestRegistryCompleteness:
     def test_subfolders_are_unique_and_named_for_the_diagnoses(self):
         folders = [r.subfolder for r in REGISTRY.values() if r.subfolder]
 
-        assert len(folders) == len(set(folders)) == 13
-        assert {"sampling-dropout", "between-segments", "no-track-coverage"} <= set(folders)
+        assert len(folders) == len(set(folders)) == 20
+        assert {
+            "sampling-dropout",
+            "between-segments",
+            "no-track-coverage",
+            "target-unexaminable",
+        } <= set(folders)
         assert review_subfolders() == set(folders)
 
     def test_the_two_gap_reasons_stay_distinct_in_every_rendering(self):
@@ -109,7 +145,11 @@ class TestRegistryCompleteness:
     def test_only_failed_reasons_and_the_run_level_row_raise_the_exit_code(self):
         raising = {key for key, row in REGISTRY.items() if row.exit_term == 1}
 
-        assert raising == {*FailedReason, RunLevelReason.WRITE_UNINTENDED_PATH}
+        assert raising == {
+            *FailedReason,
+            RunLevelReason.WRITE_UNINTENDED_PATH,
+            RunLevelReason.BLOCK_COUNT_UNRECONCILED,
+        }
 
     def test_unattributed_remedy_says_manual_inspection_not_a_rerun(self):
         remedy = spec(FailedReason.WRITE_UNATTRIBUTED).remedy
@@ -264,8 +304,7 @@ class TestExitCodeFold:
         assert fold_exit_code(dry, self.ok, None) == fold_exit_code(written, self.ok, None)
 
     def test_write_only_outcomes_are_not_produced_by_the_classifier(self):
-        from gps_sync.classifier import classify
-        from tests.support import config, index_of, segment, tag_record
+        from tests.support import classify, config, index_of, segment, tag_record
 
         covered = index_of(segment("s#trk0seg0", [(0, 1.0, 1.0, None), (60, 2.0, 2.0, None)]))
         records = [
@@ -291,3 +330,54 @@ class TestExitCodeFold:
                     FailedReason.WRITE_ERROR,
                     FailedReason.WRITE_UNATTRIBUTED,
                 }
+
+
+class TestTheTelemetryInconsistentRowIsTrueOfEveryConditionThatEmitsIt:
+    ROW = REGISTRY[FailedReason.TELEMETRY_INCONSISTENT]
+
+    def test_the_label_claims_no_more_than_a_disagreement(self):
+        assert "internally" not in self.ROW.label
+        assert "container record" in self.ROW.label
+
+    @pytest.mark.parametrize(
+        "phrase",
+        [
+            "latitude, longitude and sample-time lists",
+            "no readable Duration",
+            "more than a second short",
+            "truncated",
+            "a re-run will not change it",
+        ],
+    )
+    def test_the_remedy_separates_the_conditions_a_re_run_can_clear_from_those_it_cannot(
+        self, phrase
+    ):
+        assert phrase in self.ROW.remedy
+
+    def test_a_blanket_re_run_instruction_is_not_given(self):
+        assert not self.ROW.remedy.startswith("re-run")
+        assert self.ROW.subfolder == "inconsistent-telemetry"
+
+
+class TestTheInsufficientSpaceRowIsTrueOfAStillAsWellAsAClip:
+    ROW = REGISTRY[FailedReason.WRITE_INSUFFICIENT_SPACE]
+
+    def test_the_remedy_does_not_frame_the_refusal_as_a_video_only_one(self):
+        assert "video" not in self.ROW.remedy and "clip's own" not in self.ROW.remedy
+        assert "a still as well as a clip" in self.ROW.remedy
+
+    def test_a_still_target_is_refused_with_the_registry_wording(self):
+        from gps_sync.space import check_space
+        from tests.unit.test_writer import planned
+
+        target = planned("/m/a.RAF")
+
+        _, refused = check_space(
+            [target],
+            keep_original=False,
+            size_of=lambda _p: 10,
+            volume_of=lambda _p: 1,
+            free_of=lambda _p: 0,
+        )
+
+        assert refused[target.path].reason is FailedReason.WRITE_INSUFFICIENT_SPACE

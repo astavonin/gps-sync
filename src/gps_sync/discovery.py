@@ -15,6 +15,8 @@ from gps_sync.model import Ignored, IgnoredReason
 
 #: Recognised still extensions (lowercase). A recognised still always becomes a candidate.
 STILL_EXTENSIONS = frozenset({".raf", ".dng", ".jpg", ".jpeg", ".tif", ".tiff", ".heic"})
+#: Video extensions, candidates only under ``--video``.
+VIDEO_EXTENSIONS = frozenset({".mp4", ".mov"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +32,7 @@ class DiscoveryResult:
 class _Walk:
     root: Path
     prune: frozenset[Path]
+    extensions: frozenset[str]
     candidates: list[str] = field(default_factory=list)
     ignored: list[Ignored] = field(default_factory=list)
     pruned: list[str] = field(default_factory=list)
@@ -44,13 +47,16 @@ class _Walk:
             path = Path(entry.path)
             if entry.is_symlink():
                 self.ignored.append(Ignored(entry.path, IgnoredReason.SYMLINK, self._target(path)))
+            elif entry.is_dir(follow_symlinks=False) and path in self.prune:
+                self.pruned.append(entry.path)
+            elif entry.name.startswith("."):
+                # After the symlink and prune branches, so a hidden symlink is still a symlink and a
+                # run-artifact root whose name begins with a dot is still reported as pruned.
+                self.ignored.append(Ignored(entry.path, IgnoredReason.HIDDEN_ENTRY))
             elif entry.is_dir(follow_symlinks=False):
-                if path in self.prune:
-                    self.pruned.append(entry.path)
-                else:
-                    self.visit(path)
+                self.visit(path)
             elif not entry.is_file(follow_symlinks=False) or (
-                os.path.splitext(entry.name)[1].lower() not in STILL_EXTENSIONS
+                os.path.splitext(entry.name)[1].lower() not in self.extensions
             ):
                 self.ignored.append(Ignored(entry.path, IgnoredReason.NOT_A_STILL))
             else:
@@ -78,14 +84,16 @@ class _Walk:
             self.ignored.append(Ignored(entry.path, IgnoredReason.DUPLICATE_INODE, retained))
 
 
-def discover(media_root: Path, prune: frozenset[Path]) -> DiscoveryResult:
+def discover(media_root: Path, prune: frozenset[Path], *, video: bool = False) -> DiscoveryResult:
     """Walk ``media_root`` (already resolved) and classify every entry.
 
     ``prune`` holds resolved absolute directories, the run-artifact subtrees, that are skipped
-    wherever they sit.
+    wherever they sit. ``video`` admits the video extensions as candidates; a hidden entry is
+    skipped, with its subtree when it is a directory, whatever the flag.
     """
     if not media_root.is_dir():
         raise ToolFailure(f"media root {media_root} is not a readable directory")
-    walk = _Walk(media_root, prune)
+    extensions = STILL_EXTENSIONS | VIDEO_EXTENSIONS if video else STILL_EXTENSIONS
+    walk = _Walk(media_root, prune, extensions)
     walk.visit(media_root)
     return DiscoveryResult(tuple(walk.candidates), tuple(walk.ignored), tuple(walk.pruned))

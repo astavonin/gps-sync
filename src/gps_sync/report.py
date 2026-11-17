@@ -7,6 +7,9 @@ and remedy text for every reason present. The two gap reasons are never summed.
 from collections.abc import Sequence
 
 from gps_sync.model import (
+    AGGREGATION_SPECS,
+    REJECTION_SPECS,
+    Centroid,
     Extended,
     Failed,
     Geotagged,
@@ -18,11 +21,13 @@ from gps_sync.model import (
     Position,
     Protected,
     ProtectedReason,
+    RunLevelReason,
     Unmatchable,
+    UnmatchableReason,
     assert_never,
     reason_key,
 )
-from gps_sync.registry import REGISTRY, spec
+from gps_sync.registry import PRINTED, REGISTRY, spec
 from gps_sync.serialise import instant_text
 from gps_sync.summary import RunInfo, RunSummary
 
@@ -74,6 +79,19 @@ def _provenance(outcome: Planned | Geotagged | Protected | Failed) -> str:
                 f"clamp {_duration(provenance.clamp_s)}, "
                 f"overrode {provenance.overridden_reason.value})"
             )
+        case Centroid():
+            dropped = sum(count for _, count in provenance.dropped)
+            reasons = ", ".join(
+                f"{REJECTION_SPECS[reason].phrase} {count}" for reason, count in provenance.dropped
+            )
+            return (
+                f" via CENTROID ({AGGREGATION_SPECS[provenance.rule].phrase} of "
+                f"{provenance.samples_used} of {provenance.samples_read} samples, "
+                f"{dropped} dropped ({reasons}), span {provenance.span_s:.2f} s, "
+                f"shortfall against the duration {provenance.shortfall_s:.2f} s, "
+                f"farthest fix {provenance.spread_m:.1f} m from the position, "
+                f"altitude {provenance.altitude.value})"
+            )
         case _:
             assert_never(provenance)
 
@@ -95,7 +113,10 @@ def file_line(outcome: Outcome) -> str:
             else:
                 assert outcome.position is not None
                 state = f"carries {_coordinates(outcome.position)}"
-            when = f", instant {instant_text(outcome.instant)}" if outcome.instant else ""
+            if outcome.instant:
+                when = f", instant {instant_text(outcome.instant)}"
+            else:
+                when = f", no instant: {outcome.detail}" if outcome.detail else ""
             return f"{head}Protected/{outcome.reason.value} - {label}: {state}{when}"
         case Failed():
             detail = f": {outcome.detail}" if outcome.detail else ""
@@ -129,7 +150,7 @@ def _unmatchable_detail(outcome: Unmatchable) -> str:
     return ": " + ", ".join(parts)
 
 
-def _counts_section(summary: RunSummary) -> list[str]:
+def _counts_section(summary: RunSummary, run_level: dict[str, int]) -> list[str]:
     lines = ["Outcomes"]
     for variant, total in summary.variant_counts.items():
         if variant in ("Planned", "Geotagged"):
@@ -140,8 +161,70 @@ def _counts_section(summary: RunSummary) -> list[str]:
         lines.append(f"  {variant}: {total}")
         for row in _REASON_ORDER:
             if row.variant == variant and summary.reason_counts.get(row.json, 0):
-                lines.append(f"    {row.json} ({row.label}): {summary.reason_counts[row.json]}")
+                note = (
+                    " - see the run-level diagnostic above: no tracks root was given"
+                    if row.json == UnmatchableReason.OUTSIDE_COVERAGE.value
+                    and RunLevelReason.NO_TRACKS_ROOT_FOR_MATCHED_CANDIDATES.value in run_level
+                    else ""
+                )
+                lines.append(
+                    f"    {row.json} ({row.label}): {summary.reason_counts[row.json]}{note}"
+                )
     return lines
+
+
+def _run_level_lines(info: RunInfo) -> list[str]:
+    """Print each run-level diagnostic that fired, ahead of the per-file sections it qualifies."""
+    lines = [
+        f"Run-level diagnostic: {row.label}: {info.run_level[row.json]} - {row.remedy}"
+        for row in REGISTRY.values()
+        if row.variant == "run-level" and row.json in info.run_level
+    ]
+    return [*lines, ""] if lines else []
+
+
+def _space_lines(info: RunInfo) -> list[str]:
+    """Print the demand the write run's own per-file check will evaluate, per volume.
+
+    Only a dry run prints it: a write run's report shows the check's outcome, and its figures
+    reach the JSON record and the audit verdict instead.
+    """
+    if info.mode != "dry-run":
+        return []
+    return [
+        f"Free space a write needs on volume {d.volume}: {d.peak_bytes} bytes at peak (the largest "
+        f"planned target plus slack); with --keep-original {d.retained_bytes} bytes accumulate"
+        for d in info.space_demand
+    ]
+
+
+def _telemetry_read_lines(info: RunInfo) -> list[str]:
+    """Print what the telemetry read cost, only when a clip was read for telemetry."""
+    read = info.telemetry_read
+    if read.clips == 0:
+        return []
+    return [
+        f"Telemetry read: {read.clips} clip(s) in {read.chunks} chunk(s), {read.elapsed_s:.1f} s"
+    ]
+
+
+def _altitude_lines(summary: RunSummary) -> list[str]:
+    parts = ", ".join(f"{name} {count}" for name, count in summary.altitude_breakdown.items())
+    return [
+        f"Altitude not available for {summary.altitude_unavailable} planned/written file(s) "
+        f"({parts})"
+    ]
+
+
+def _dispersion_lines(summary: RunSummary) -> list[str]:
+    dispersion = summary.dispersion
+    if dispersion.count == 0 or dispersion.median_m is None:
+        return []
+    return [
+        f"Telemetry centroid dispersion: {dispersion.count} file(s), farthest used fix from the "
+        f"written position - minimum {dispersion.minimum_m:.1f} m, "
+        f"median {dispersion.median_m:.1f} m, maximum {dispersion.maximum_m:.1f} m"
+    ]
 
 
 def _coverage_line(summary: RunSummary) -> str:
@@ -151,9 +234,9 @@ def _coverage_line(summary: RunSummary) -> str:
             "Coverage: not applicable - nothing reached the matcher, which is the healthy reading "
             "for an idempotent re-run and not a regression"
         )
+    split = ", ".join(f"{via} {count}" for via, count in coverage.by_via.items())
     return (
-        f"Coverage: {coverage.matched}/{coverage.reached_matcher} = {coverage.rate:.1f} % "
-        f"(INTERPOLATED {coverage.interpolated}, EXTENDED {coverage.extended})"
+        f"Coverage: {coverage.matched}/{coverage.reached_matcher} = {coverage.rate:.1f} % ({split})"
     )
 
 
@@ -235,7 +318,7 @@ def render_report(outcomes: Sequence[Outcome], summary: RunSummary, info: RunInf
     )
     lines += [
         f"media:    {info.media_root}",
-        f"tracks:   {info.tracks_root}",
+        f"tracks:   {info.tracks_root if info.tracks_root is not None else '(none given)'}",
         f"exiftool: {info.exiftool_version}",
         "",
         "Run artifacts",
@@ -261,19 +344,21 @@ def render_report(outcomes: Sequence[Outcome], summary: RunSummary, info: RunInf
         for o in info.overlaps
     ]
     lines.append("")
-    lines += _counts_section(summary)
+    lines += _run_level_lines(info)
+    lines += _counts_section(summary, info.run_level)
     lines.append(_coverage_line(summary))
-    lines.append(
-        f"Altitude not available for {summary.altitude_unavailable} planned/written file(s)"
-    )
+    lines += _space_lines(info)
+    lines += _telemetry_read_lines(info)
+    lines += _altitude_lines(summary)
+    lines += _dispersion_lines(summary)
     figures = _remedy_lines(summary)
     texts = _remedy_text_lines(summary)
     if figures or texts:
         lines += ["", "Remedies", *figures, *texts]
     lines += ["", *_sensitivity_lines(summary), ""]
-    skipped = [o for o in outcomes if isinstance(o, Ignored) and o.reason.value != "NOT_A_STILL"]
-    lines += [f"  {file_line(o)}" for o in skipped]
-    lines += [f"  {file_line(o)}" for o in outcomes if not isinstance(o, Ignored)]
+    listed = [o for o in outcomes if spec(reason_key(o)).per_file_lines == PRINTED]
+    lines += [f"  {file_line(o)}" for o in listed if isinstance(o, Ignored)]
+    lines += [f"  {file_line(o)}" for o in listed if not isinstance(o, Ignored)]
     if any(isinstance(o, Ignored) and o.reason is IgnoredReason.DUPLICATE_INODE for o in outcomes):
         lines += [
             "",
@@ -284,12 +369,19 @@ def render_report(outcomes: Sequence[Outcome], summary: RunSummary, info: RunInf
     if info.reconciliation is not None:
         reconciliation = info.reconciliation
         lines.append("")
+        exit_text = (
+            "exiftool did not run"
+            if reconciliation.returncode is None
+            else f"exiftool exited {reconciliation.returncode}"
+        )
         lines.append(
-            f"Write phase: exiftool exited {reconciliation.returncode}; last marker present: "
-            f"{reconciliation.last_marker or 'none'}"
+            f"Write phase: {exit_text}; last marker present: {reconciliation.last_marker or 'none'}"
         )
         if reconciliation.process_failure:
             lines.append(f"  process failure: {reconciliation.process_failure}")
+        for shape in reconciliation.unreconciled:
+            row = _BY_NAME["BLOCK_COUNT_UNRECONCILED"]
+            lines.append(f"  BLOCK_COUNT_UNRECONCILED ({row.label}): {shape}")
         for unintended in reconciliation.unintended:
             row = _BY_NAME["WRITE_UNINTENDED_PATH"]
             lines.append(

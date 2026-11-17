@@ -11,10 +11,17 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from gps_sync.classifier import ClassifierConfig
+from gps_sync.classifier import (
+    ClassifierConfig,
+    GpxPath,
+    TelemetryPath,
+    decide_path,
+    derive_outcome,
+)
 from gps_sync.gpx import TrackPoint, TrackSegment
 from gps_sync.index import TrackIndex, build_index
-from gps_sync.records import TagRecord
+from gps_sync.model import Outcome
+from gps_sync.records import TagRecord, TelemetryRecord
 from gps_sync.transport import MarkedBlock, ReadResult, WriteBatchResult
 
 T0 = datetime(2026, 10, 26, 4, 0, 0, tzinfo=UTC)
@@ -48,6 +55,8 @@ def tag_record(
     date_time_original: str | None = "2026:10:26 10:00:30",
     offset: str | None = "+06:00",
     create_date: str | None = None,
+    creation_date: str | None = None,
+    major_brand: str | None = None,
     file_type: str | None = "RAF",
     make: str | None = "FUJIFILM",
     model: str | None = "X-T5",
@@ -68,6 +77,8 @@ def tag_record(
         "DateTimeOriginal": date_time_original,
         "OffsetTimeOriginal": offset,
         "CreateDate": create_date,
+        "CreationDate": creation_date,
+        "MajorBrand": major_brand,
         "FileType": file_type,
         "Make": make,
         "Model": model,
@@ -82,6 +93,42 @@ def tag_record(
             raw[f"{'' if rank == 0 else f'Copy{rank}'}:{name}"] = value
     raw.update(extra or {})
     return TagRecord.from_json(raw)
+
+
+def telemetry_json(
+    path: str = "/media/a.MP4",
+    *,
+    lat: Sequence[object] = (),
+    lon: Sequence[object] = (),
+    alt: Sequence[object] = (),
+    times: Sequence[object] = (),
+    atoms: Sequence[object] = (),
+) -> dict[str, object]:
+    """Build the ``-ee -j -n -a -G4`` object for a clip: one instance per sample, copy 0 first."""
+    raw: dict[str, object] = {"SourceFile": path}
+    for name, values in (
+        ("GPSLatitude", lat),
+        ("GPSLongitude", lon),
+        ("AbsoluteAltitude", alt),
+        ("SampleTime", times),
+        ("GPSCoordinates", atoms),
+    ):
+        for rank, value in enumerate(values):
+            raw[f"{'' if rank == 0 else f'Copy{rank}'}:{name}"] = value
+    return raw
+
+
+def classify(
+    record: TagRecord,
+    index: TrackIndex,
+    configuration: ClassifierConfig,
+    telemetry: TelemetryRecord | None = None,
+) -> Outcome:
+    """Run both classification phases back to back, as the orchestrator does around its read."""
+    verdict = decide_path(record, configuration)
+    if not isinstance(verdict, GpxPath | TelemetryPath):
+        return verdict
+    return derive_outcome(record, verdict, telemetry, index, configuration)
 
 
 def config(
@@ -129,8 +176,11 @@ class FakeTransport:
         *,
         version: str = "13.55",
         on_write: Callable[[Path], WriteBatchResult] | None = None,
+        telemetry: Callable[[str], Mapping[str, object]] | None = None,
     ) -> None:
         self._records = records or (lambda path: {})
+        self._telemetry = telemetry or (lambda path: {})
+        self.telemetry_calls: list[list[str]] = []
         self._version = version
         self._on_write = on_write
         self.read_calls: list[list[str]] = []
@@ -143,6 +193,11 @@ class FakeTransport:
         paths = argfile.read_text().splitlines()
         self.read_calls.append(paths)
         return ReadResult({p: {"SourceFile": p, **self._records(p)} for p in paths})
+
+    def read_telemetry(self, argfile: Path) -> ReadResult:
+        paths = argfile.read_text().splitlines()
+        self.telemetry_calls.append(paths)
+        return ReadResult({p: {"SourceFile": p, **self._telemetry(p)} for p in paths})
 
     def write(self, argfile: Path) -> WriteBatchResult:
         self.write_calls.append(argfile.read_text().splitlines())

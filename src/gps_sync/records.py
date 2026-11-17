@@ -19,6 +19,13 @@ def _text(value: object) -> str | None:
     return text or None
 
 
+def _finite_number(text: str | None) -> float | None:
+    if text is None or _NUMBER.fullmatch(text) is None:
+        return None
+    number = float(text)
+    return number if number - number == 0 else None
+
+
 def _diagnostics(values: list[object]) -> tuple[str, ...]:
     items: list[object] = []
     for value in values:
@@ -92,9 +99,17 @@ class TagRecord:
     path: str
     has_gps_key: bool
     gps_position: object
+    # The four time tags keep "" for a present-but-blank value and None for an absent one: a
+    # corroborating witness that is present and unreadable must refuse, not read as no witness.
     date_time_original: str | None
-    offset_time_original: str | None  # "" means present but blank, None means absent
+    offset_time_original: str | None
     create_date: str | None
+    creation_date: str | None
+    create_date_count: int
+    major_brand: str | None
+    duration_s: float | None
+    handler_types: tuple[str, ...]
+    atom_instances: tuple[object, ...]
     file_type: str | None
     make: str | None
     model: str | None
@@ -112,11 +127,19 @@ class TagRecord:
             path=str(raw["SourceFile"]),
             has_gps_key=bool(positions),
             gps_position=parseable if parseable is not None else (positions or [None])[0],
-            date_time_original=_first(tags, "DateTimeOriginal"),
+            date_time_original=_primary(tags, "DateTimeOriginal"),
             # Kept as "" when blank: a blank offset is unreadable, and reading it as absent would
             # let --utc-offset stand in for it and write a position hours out.
             offset_time_original=_primary(tags, "OffsetTimeOriginal"),
-            create_date=_first(tags, "CreateDate"),
+            create_date=_primary(tags, "CreateDate"),
+            creation_date=_primary(tags, "CreationDate"),
+            create_date_count=len(tags.get("CreateDate", [])),
+            major_brand=_first(tags, "MajorBrand"),
+            duration_s=_finite_number(_primary(tags, "Duration")),
+            handler_types=tuple(
+                text for value in tags.get("HandlerType", []) if (text := _text(value)) is not None
+            ),
+            atom_instances=tuple(tags.get("GPSCoordinates", [])),
             file_type=_first(tags, "FileType"),
             make=_first(tags, "Make"),
             model=_first(tags, "Model"),
@@ -136,3 +159,49 @@ def parse_gps_position(value: object) -> Position | None:
     if lat != lat or lon != lon or abs(lat) == float("inf") or abs(lon) == float("inf"):
         return None
     return Position(lat, lon)
+
+
+def parse_atom_coordinates(value: object) -> Position | None:
+    """Parse a ``-n`` ``GPSCoordinates`` atom value: two or three finite numbers.
+
+    Like ``parse_gps_position`` this is a presence-probe grammar, so it applies no range check and
+    does not refuse ``(0,0)``: any parseable value means hands-off. The third number is the
+    elevation, which the position parser would reject.
+    """
+    if not isinstance(value, str):
+        return None
+    parts = value.split()
+    if len(parts) not in (2, 3) or not all(_NUMBER.fullmatch(p) for p in parts):
+        return None
+    numbers = [float(p) for p in parts]
+    if any(n - n != 0 for n in numbers):
+        return None
+    return Position(numbers[0], numbers[1], numbers[2] if len(numbers) == 3 else None)
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryRecord:
+    """One clip's per-sample telemetry lists plus its own atom question.
+
+    This is deliberately a different type from ``TagRecord``: it carries no ``Composite`` value,
+    so a presence verdict cannot be taken from a value produced under ``-ee``. Each list holds
+    the raw values in sample order; interpreting them is the derivation's job.
+    """
+
+    atom_instances: tuple[object, ...]
+    latitudes: tuple[object, ...]
+    longitudes: tuple[object, ...]
+    altitudes: tuple[object, ...]
+    sample_times: tuple[object, ...]
+
+    @staticmethod
+    def from_json(raw: Mapping[str, object]) -> TelemetryRecord:
+        """Build a record from one ``-ee -j`` object."""
+        tags = _tags_by_name(raw)
+        return TelemetryRecord(
+            atom_instances=tuple(tags.get("GPSCoordinates", [])),
+            latitudes=tuple(tags.get("GPSLatitude", [])),
+            longitudes=tuple(tags.get("GPSLongitude", [])),
+            altitudes=tuple(tags.get("AbsoluteAltitude", [])),
+            sample_times=tuple(tags.get("SampleTime", [])),
+        )

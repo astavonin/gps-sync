@@ -43,6 +43,8 @@ def fold_exit_code(
         code = max(code, spec(reason_key(outcome)).exit_term)
     if reconciliation is not None and reconciliation.unintended:
         code = max(code, spec(RunLevelReason.WRITE_UNINTENDED_PATH).exit_term)
+    if reconciliation is not None and reconciliation.unreconciled:
+        code = max(code, spec(RunLevelReason.BLOCK_COUNT_UNRECONCILED).exit_term)
     if not artifacts.complete:
         code = EXIT_ARTIFACT
     return code

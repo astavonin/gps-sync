@@ -1,5 +1,6 @@
 """Remaining reporter, review-writer and discovery-level contract points."""
 
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,7 @@ from gps_sync.model import (
     Unmatchable,
     UnmatchableReason,
     Via,
+    reason_key,
 )
 from gps_sync.registry import REGISTRY
 from gps_sync.report import render_report
@@ -48,6 +50,13 @@ def one_of_every_candidate_reason(media: Path):
         Failed(p("container.RAF"), FailedReason.WRITE_UNSUPPORTED_CONTAINER, **PAYLOAD),
         Failed(p("werror.RAF"), FailedReason.WRITE_ERROR, **PAYLOAD),
         Failed(p("unattr.RAF"), FailedReason.WRITE_UNATTRIBUTED, **PAYLOAD),
+        Failed(p("partial.RAF"), FailedReason.WRITE_PARTIAL, **PAYLOAD),
+        Failed(p("incomplete.RAF"), FailedReason.WRITE_INCOMPLETE, **PAYLOAD),
+        Failed(p("semantics.MOV"), FailedReason.TIME_SEMANTICS_UNVERIFIED),
+        Failed(p("telemetry.MP4"), FailedReason.TELEMETRY_UNUSABLE),
+        Failed(p("inconsistent.MP4"), FailedReason.TELEMETRY_INCONSISTENT),
+        Failed(p("space.MP4"), FailedReason.WRITE_INSUFFICIENT_SPACE, **PAYLOAD),
+        Failed(p("gone.MP4"), FailedReason.WRITE_TARGET_UNEXAMINABLE, **PAYLOAD),
         Planned(p("planned.RAF"), at(0), Position(1, 2), Via.INTERPOLATED, Interpolated(SEG, 5.0)),
         Geotagged(p("done.RAF"), at(0), Position(1, 2), Via.INTERPOLATED, Interpolated(SEG, 5.0)),
         *(Ignored(p(f"{r.name}.x"), r) for r in IgnoredReason),
@@ -193,3 +202,78 @@ def test_a_skipped_hard_link_is_accompanied_by_the_consequence_note():
 
     assert "other links keep pointing at the pre-write content" in text
     assert "pre-write content" not in render_report([], summarise([]), run_info())
+
+
+class TestThePerFileLineColumnIsHonouredOnEverySurface:
+    def test_the_json_registry_mirror_publishes_the_column_of_every_row(self):
+        from gps_sync.runrecord import build_run_record
+
+        record = build_run_record([], summarise([]), run_info(), 0)
+
+        assert {k: v["per_file_lines"] for k, v in record["registry"].items()} == {
+            key.value: row.per_file_lines for key, row in REGISTRY.items()
+        }
+
+    def test_an_ignored_reason_gets_a_report_line_exactly_when_its_row_says_printed(self):
+        outcomes = [Ignored(f"/m/{r.name}.x", r) for r in IgnoredReason]
+
+        text = render_report(outcomes, summarise(outcomes), run_info())
+
+        for reason in IgnoredReason:
+            printed = f"/m/{reason.name}.x" in text
+            assert printed == (REGISTRY[reason].per_file_lines == "printed"), reason
+
+    def test_a_suppressed_row_drops_its_files_line_for_every_variant_not_only_ignored(
+        self, tmp_path, monkeypatch
+    ):
+        outcomes = one_of_every_candidate_reason(tmp_path)
+        baseline = render_report(outcomes, summarise(outcomes), run_info())
+
+        for outcome in outcomes:
+            key = reason_key(outcome)
+            if REGISTRY[key].per_file_lines != "printed":
+                continue
+            monkeypatch.setitem(
+                REGISTRY, key, dataclasses.replace(REGISTRY[key], per_file_lines="suppressed")
+            )
+
+            text = render_report(outcomes, summarise(outcomes), run_info())
+
+            line = f"  {outcome.path}"
+            assert any(line in row for row in baseline.splitlines()), key
+            assert not any(row.lstrip().startswith(outcome.path) for row in text.splitlines()), key
+            monkeypatch.undo()
+
+    def test_the_unintended_path_row_declares_no_per_file_line_and_the_write_phase_still_names_it(
+        self,
+    ):
+        from gps_sync.model import RunLevelReason
+        from gps_sync.writer import Reconciliation, UnintendedConclusion
+
+        reconciliation = Reconciliation(
+            (UnintendedConclusion("/elsewhere/X.RAF", ("x",)),), "/m", 0
+        )
+
+        text = render_report([], summarise([]), run_info(reconciliation=reconciliation))
+
+        assert REGISTRY[RunLevelReason.WRITE_UNINTENDED_PATH].per_file_lines == "not-applicable"
+        assert "WRITE_UNINTENDED_PATH" in text and "/elsewhere/X.RAF" in text
+
+
+def test_a_write_phase_that_never_spawned_exiftool_does_not_print_an_exit_status():
+    from gps_sync.writer import Reconciliation
+
+    text = render_report(
+        [], summarise([]), run_info(reconciliation=Reconciliation(returncode=None))
+    )
+
+    assert "Write phase: exiftool did not run; last marker present: none" in text
+    assert "exited None" not in text
+
+
+def test_a_write_phase_reports_the_exit_status_it_saw():
+    from gps_sync.writer import Reconciliation
+
+    text = render_report([], summarise([]), run_info(reconciliation=Reconciliation(returncode=1)))
+
+    assert "Write phase: exiftool exited 1; last marker present: none" in text

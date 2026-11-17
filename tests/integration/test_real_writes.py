@@ -372,3 +372,56 @@ def test_gpx_without_elevation_gives_a_six_tag_write_end_to_end(real_world, asse
         "GPS:GPSAltitudeRef",
     }
     assert "GPS:GPSLatitude" in tag_names(copy)
+
+
+class TestTheFilenameCharsetGovernsEveryBlock:
+    @pytest.fixture
+    def latin_filenames(self, tmp_path) -> Path:
+        """The real exiftool, invoked as if the filename charset were not UTF-8.
+
+        The shipped invocation asks for UTF-8; swapping the word for ``latin`` turns the request
+        into one the non-ASCII paths below cannot satisfy, which makes whether it governs a given
+        block observable on a platform whose default already happens to be UTF-8.
+        """
+        script = tmp_path / "exiftool-latin"
+        script.write_text(
+            f"#!{sys.executable}\n"
+            "import os, sys\n"
+            f"argv = [a.replace('filename=utf8', 'filename=latin') for a in sys.argv[1:]]\n"
+            f"os.execv('{EXIFTOOL}', ['{EXIFTOOL}', *argv])\n"
+        )
+        script.chmod(0o755)
+        return script
+
+    def test_a_non_ascii_path_in_a_later_block_is_governed_by_the_same_request(
+        self, tmp_path, assets, latin_filenames
+    ):
+        first = clone(assets.raf_original, tmp_path / "é1.RAF")
+        second = clone(assets.raf_original, tmp_path / "é2.RAF")
+
+        result = run_write(
+            ExiftoolTransport(str(latin_filenames)),
+            [target(first, "RAF"), target(second, "RAF")],
+            tmp_path,
+            keep_original=False,
+        )
+
+        assert not any(isinstance(o, Geotagged) for o in result.outcomes)
+        assert "GPSLatitude" not in tags(first, "-GPSLatitude")
+        assert "GPSLatitude" not in tags(second, "-GPSLatitude")
+
+    def test_the_shipped_request_writes_non_ascii_paths_in_every_block(
+        self, tmp_path, assets, real_transport
+    ):
+        first = clone(assets.raf_original, tmp_path / "é1.RAF")
+        second = clone(assets.raf_original, tmp_path / "é2.RAF")
+
+        result = run_write(
+            real_transport,
+            [target(first, "RAF"), target(second, "RAF")],
+            tmp_path,
+            keep_original=False,
+        )
+
+        assert all(isinstance(o, Geotagged) for o in result.outcomes)
+        assert tags(second, "-GPSLatitude")["GPSLatitude"] == pytest.approx(42.5)

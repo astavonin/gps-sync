@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gps_sync.model import (
+    Centroid,
     Extended,
     Failed,
     Geotagged,
@@ -55,6 +56,18 @@ def provenance_dict(provenance: Provenance) -> dict[str, Any]:
                 "clamp_s": provenance.clamp_s,
                 "overridden_reason": provenance.overridden_reason.value,
             }
+        case Centroid():
+            return {
+                "kind": "Centroid",
+                "samples_read": provenance.samples_read,
+                "samples_used": provenance.samples_used,
+                "dropped": {reason.value: count for reason, count in provenance.dropped},
+                "span_s": provenance.span_s,
+                "shortfall_s": provenance.shortfall_s,
+                "rule": provenance.rule.value,
+                "spread_m": provenance.spread_m,
+                "altitude": provenance.altitude.value,
+            }
         case _:
             assert_never(provenance)
 
@@ -99,9 +112,9 @@ def outcome_to_dict(outcome: Outcome) -> dict[str, Any]:
         case _:
             assert_never(outcome)
     match outcome:
-        case Failed() | Unmatchable():
+        case Failed() | Unmatchable() | Protected():
             _put(data, "detail", outcome.detail)
-        case Protected() | Planned() | Geotagged():
+        case Planned() | Geotagged():
             pass
     if outcome.context is not None:
         context = {

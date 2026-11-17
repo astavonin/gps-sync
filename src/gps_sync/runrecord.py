@@ -11,6 +11,7 @@ from typing import Any
 from gps_sync.model import Outcome
 from gps_sync.registry import REGISTRY
 from gps_sync.serialise import instant_text, outcome_to_dict
+from gps_sync.space import VolumeDemand
 from gps_sync.summary import RunInfo, RunSummary
 
 
@@ -28,7 +29,7 @@ def summary_to_dict(summary: RunSummary) -> dict[str, Any]:
             "reached_matcher": coverage.reached_matcher,
             "rate_percent": coverage.rate,
             "applicable": coverage.rate is not None,
-            "by_via": {"INTERPOLATED": coverage.interpolated, "EXTENDED": coverage.extended},
+            "by_via": dict(coverage.by_via),
         },
         "remedies": [
             {
@@ -54,8 +55,25 @@ def summary_to_dict(summary: RunSummary) -> dict[str, Any]:
             "median_s": window.median_s,
             "largest_s": window.largest_s,
         },
-        "altitude_unavailable": summary.altitude_unavailable,
+        "altitude_unavailable": {
+            "total": summary.altitude_unavailable,
+            "breakdown": summary.altitude_breakdown,
+        },
+        "centroid_dispersion": {
+            "count": summary.dispersion.count,
+            "minimum_m": summary.dispersion.minimum_m,
+            "median_m": summary.dispersion.median_m,
+            "maximum_m": summary.dispersion.maximum_m,
+        },
     }
+
+
+def space_demand_to_list(demand: Sequence[VolumeDemand]) -> list[dict[str, int]]:
+    """Render the free-space forecast, one entry per volume, for every surface that carries it."""
+    return [
+        {"volume": d.volume, "peak_bytes": d.peak_bytes, "retained_bytes": d.retained_bytes}
+        for d in demand
+    ]
 
 
 def _reconciliation_to_dict(info: RunInfo) -> dict[str, Any] | None:
@@ -69,6 +87,8 @@ def _reconciliation_to_dict(info: RunInfo) -> dict[str, Any] | None:
         "unintended_conclusions": [
             {"path": u.path, "lines": list(u.lines)} for u in reconciliation.unintended
         ],
+        "unreconciled_blocks": list(reconciliation.unreconciled),
+        "unreconciled_paths": list(reconciliation.unreconciled_paths),
     }
     return data
 
@@ -119,6 +139,9 @@ def build_run_record(
         ],
         "summary": summary_to_dict(summary),
         "reconciliation": _reconciliation_to_dict(info),
+        "run_level": dict(info.run_level),
+        "space_demand": space_demand_to_list(info.space_demand),
+        "telemetry_read": info.telemetry_read.as_record(),
         "registry": {
             key.value: {
                 "variant": row.variant,
@@ -126,6 +149,7 @@ def build_run_record(
                 "label": row.label,
                 "remedy": row.remedy,
                 "exit_term": row.exit_term,
+                "per_file_lines": row.per_file_lines,
             }
             for key, row in REGISTRY.items()
         },

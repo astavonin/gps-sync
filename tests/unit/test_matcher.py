@@ -226,6 +226,31 @@ class TestRefusalReasons:
         assert result.position.lat == 42.1
         assert result.provenance.clamp_s == 100
 
+    def test_a_positive_extend_smaller_than_the_interior_miss_keeps_the_max_gap_refusal(self):
+        index = one_segment(
+            (0, 42.0, 77.0, None), (10, 42.0001, 77.0, None), (1000, 42.1, 77.0, None)
+        )
+
+        result = refused(match(index, at(900), GAP, timedelta(seconds=99)))
+
+        assert result.reason is UnmatchableReason.MAX_GAP_EXCEEDED
+        assert result.miss_s == 100
+
+    def test_an_extend_exactly_equal_to_the_interior_miss_still_clamps(self):
+        index = one_segment(
+            (0, 42.0, 77.0, None), (10, 42.0001, 77.0, None), (1000, 42.1, 77.0, None)
+        )
+
+        result = matched(match(index, at(900), GAP, timedelta(seconds=100)))
+
+        assert result.via is Via.EXTENDED
+
+    def test_a_positive_extend_smaller_than_the_boundary_miss_keeps_the_boundary_refusal(self):
+        result = refused(match(two_segments_50km_apart(), at(20), GAP, timedelta(seconds=19)))
+
+        assert result.reason is UnmatchableReason.SEGMENT_BOUNDARY
+        assert result.miss_s == 20
+
     def test_an_exact_tie_between_the_endpoints_clamps_to_the_earlier_one(self):
         index = one_segment((0, 42.0, 77.0, None), (1000, 42.1, 77.0, None))
 

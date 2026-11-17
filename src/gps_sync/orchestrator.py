@@ -16,15 +16,21 @@ from typing import TextIO
 
 from gps_sync.argfile import is_representable
 from gps_sync.audit import AuditWriter, RecordContext, find_incomplete_records
-from gps_sync.classifier import ClassifierConfig, classify
+from gps_sync.classifier import (
+    ClassifierConfig,
+    GpxPath,
+    TelemetryPath,
+    decide_path,
+    derive_outcome,
+)
 from gps_sync.discovery import discover
-from gps_sync.errors import ToolFailure
+from gps_sync.errors import InternalConsistencyError, ToolFailure
 from gps_sync.exitcode import ArtifactStatus, fold_exit_code
-from gps_sync.gpx import parse_tracks
+from gps_sync.gpx import TracksParse, parse_tracks
 from gps_sync.index import build_index
 from gps_sync.model import Failed, FailedReason, Outcome, Planned
 from gps_sync.options import Options
-from gps_sync.reader import read_records
+from gps_sync.reader import read_records, read_telemetry
 from gps_sync.report import render_report
 from gps_sync.review import (
     check_precondition,
@@ -32,14 +38,16 @@ from gps_sync.review import (
     rebuild,
     resolve_layout,
 )
-from gps_sync.runrecord import render_json
-from gps_sync.summary import RunInfo, summarise
+from gps_sync.runrecord import render_json, space_demand_to_list
+from gps_sync.space import SpaceCheck, check_space, demand
+from gps_sync.summary import RunInfo, TelemetryRead, run_level_figures, summarise
 from gps_sync.transport import ExiftoolTransport, Transport, check_version, locate_exiftool
 from gps_sync.writer import (
     Reconciliation,
     WriteResult,
     assert_targets_writable,
     conclusions_by_path,
+    merge_conclusions,
     run_write,
 )
 
@@ -76,6 +84,7 @@ def run(
     stderr: TextIO | None = None,
     home: Path | None = None,
     temp_base: Path | None = None,
+    space_check: SpaceCheck = check_space,
 ) -> int:
     """Run the tool and return the process exit code (0, 1, 2 or 3)."""
     out = sys.stdout if stdout is None else stdout
@@ -90,7 +99,15 @@ def run(
 
     try:
         return _run(
-            options, transport, clock, out, diagnostic, trace, home or Path.home(), temp_base
+            options,
+            transport,
+            clock,
+            out,
+            diagnostic,
+            trace,
+            home or Path.home(),
+            temp_base,
+            space_check,
         )
     except ToolFailure as failure:
         diagnostic(f"gps-sync: error: {failure}")
@@ -106,6 +123,7 @@ def _run(
     trace: Callable[[str], None],
     home: Path,
     temp_base: Path | None,
+    space_check: SpaceCheck,
 ) -> int:
     backend = transport or ExiftoolTransport(locate_exiftool(), trace)
     version_text = backend.version()
@@ -118,15 +136,17 @@ def _run(
     try:
         trace(f"temporary directory: {temp_dir}")
         incomplete_prior = find_incomplete_records(layout.runs)
-        tracks_root = options.tracks.resolve()
-        parsed = parse_tracks(tracks_root)
+        tracks_root = options.tracks.resolve() if options.tracks is not None else None
+        # A supplied root that holds no GPX file stays fatal; an omitted one is a declared empty
+        # index, so a mistyped path cannot pass for "no tracks".
+        parsed = parse_tracks(tracks_root) if tracks_root is not None else TracksParse((), ())
         index = build_index(s for f in parsed.files for s in f.segments)
         for overlap in index.overlaps:
             diagnostic(
                 f"warning: segments {overlap.segment_a} and {overlap.segment_b} overlap in time; "
                 "brackets inside the overlap are refused as SEGMENT_BOUNDARY"
             )
-        found = discover(media_root, layout.prune_set)
+        found = discover(media_root, layout.prune_set, video=options.video)
         for ignored in found.ignored:
             trace(f"ignored {ignored.reason.value}: {ignored.path}")
         for pruned in found.pruned:
@@ -146,11 +166,40 @@ def _run(
             options.max_gap, options.extend, options.time_shift, options.utc_offset
         )
         records = read_records(backend, readable, temp_dir, trace=trace) if readable else {}
-        outcomes += [classify(records[path], index, config) for path in readable]
+        verdicts = {path: decide_path(records[path], config) for path in readable}
+        telemetry_paths = [p for p, v in verdicts.items() if isinstance(v, TelemetryPath)]
+        for path, verdict in verdicts.items():
+            if not isinstance(verdict, TelemetryPath):
+                outcomes.append(
+                    derive_outcome(records[path], verdict, None, index, config)
+                    if isinstance(verdict, GpxPath)
+                    else verdict
+                )
+        telemetry_started = clock()
+        chunks = 0
+        for chunk in read_telemetry(backend, telemetry_paths, temp_dir, trace=trace):
+            chunks += 1
+            for path, telemetry in chunk.items():
+                verdict = verdicts[path]
+                if not isinstance(verdict, TelemetryPath):
+                    raise InternalConsistencyError(
+                        f"{path} was read for telemetry without a verdict"
+                    )
+                outcomes.append(derive_outcome(records[path], verdict, telemetry, index, config))
+        # A run that read no telemetry reports zero, so two identical stills-only runs yield the
+        # same record rather than differing by the time of an empty loop.
+        telemetry_read = TelemetryRead(
+            len(telemetry_paths),
+            chunks,
+            (clock() - telemetry_started).total_seconds() if telemetry_paths else 0.0,
+        )
         outcomes.sort(key=lambda o: o.path)
 
         record_context = RecordContext(
-            options.as_record(), str(media_root), str(tracks_root), version_text
+            options.as_record(),
+            str(media_root),
+            None if tracks_root is None else str(tracks_root),
+            version_text,
         )
         problems: list[str] = []
         audit_ok = True
@@ -158,6 +207,7 @@ def _run(
         reconciliation: Reconciliation | None = None
         audit = AuditWriter(layout.runs, clock) if options.write else None
         planned = [o for o in outcomes if isinstance(o, Planned)]
+        forecast = demand(planned)
         result: WriteResult | None = None
         if audit is not None:
             audit_path = str(audit.path)
@@ -169,9 +219,21 @@ def _run(
                     raise ToolFailure(
                         f"cannot write the intent record {audit.path}: {error}"
                     ) from None
-                result = run_write(
-                    backend, planned, temp_dir, keep_original=options.keep_original, trace=trace
+                writable, refused = space_check(planned, keep_original=options.keep_original)
+                # An empty write set spawns nothing: an empty argfile makes exiftool print its
+                # whole usage document, which the block parser would ingest as a trailing run.
+                written = (
+                    run_write(
+                        backend,
+                        writable,
+                        temp_dir,
+                        keep_original=options.keep_original,
+                        trace=trace,
+                    )
+                    if writable
+                    else None
                 )
+                result = merge_conclusions(planned, written, refused)
                 reconciliation = result.reconciliation
                 by_path = conclusions_by_path(result)
                 outcomes = [by_path[o.path] if isinstance(o, Planned) else o for o in outcomes]
@@ -179,13 +241,18 @@ def _run(
                 reconciliation = Reconciliation()
         summary = summarise(outcomes)
         if audit is not None and reconciliation is not None:
-            verdict = {
+            completion = {
                 "variant_counts": summary.variant_counts,
                 "unintended_paths": len(reconciliation.unintended),
                 "write_returncode": reconciliation.returncode,
+                "space_demand": space_demand_to_list(forecast),
+                "telemetry_read": telemetry_read.as_record(),
+                "run_level": run_level_figures(
+                    outcomes, tracks_given=tracks_root is not None, reconciliation=reconciliation
+                ),
             }
             try:
-                audit.write_complete(record_context, planned, result, verdict)
+                audit.write_complete(record_context, planned, result, completion)
             except OSError as error:
                 audit_ok = False
                 problems.append(
@@ -204,7 +271,7 @@ def _run(
         info = RunInfo(
             mode="write" if options.write else "dry-run",
             media_root=str(media_root),
-            tracks_root=str(tracks_root),
+            tracks_root=None if tracks_root is None else str(tracks_root),
             exiftool_version=version_text,
             options=options.as_record(),
             review_root=str(layout.review_root),
@@ -221,6 +288,11 @@ def _run(
             ),
             artifacts=artifacts,
             reconciliation=reconciliation,
+            run_level=run_level_figures(
+                outcomes, tracks_given=tracks_root is not None, reconciliation=reconciliation
+            ),
+            space_demand=forecast,
+            telemetry_read=telemetry_read,
         )
         provisional = fold_exit_code(outcomes, artifacts, reconciliation)
         text = (

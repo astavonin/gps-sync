@@ -154,6 +154,23 @@ class TestPerFileDetail:
             ),
             FailedReason.WRITE_ERROR: matched_after_refusal(FailedReason.WRITE_ERROR),
             FailedReason.WRITE_UNATTRIBUTED: matched_after_refusal(FailedReason.WRITE_UNATTRIBUTED),
+            FailedReason.WRITE_PARTIAL: matched_after_refusal(FailedReason.WRITE_PARTIAL),
+            FailedReason.WRITE_INCOMPLETE: matched_after_refusal(FailedReason.WRITE_INCOMPLETE),
+            FailedReason.TIME_SEMANTICS_UNVERIFIED: Failed(
+                "/m/u", FailedReason.TIME_SEMANTICS_UNVERIFIED, "d"
+            ),
+            FailedReason.TELEMETRY_UNUSABLE: Failed("/m/x", FailedReason.TELEMETRY_UNUSABLE, "d"),
+            FailedReason.TELEMETRY_INCONSISTENT: Failed(
+                "/m/y", FailedReason.TELEMETRY_INCONSISTENT, "d"
+            ),
+            FailedReason.WRITE_INSUFFICIENT_SPACE: matched_after_refusal(
+                FailedReason.WRITE_INSUFFICIENT_SPACE
+            ),
+            FailedReason.WRITE_TARGET_UNEXAMINABLE: matched_after_refusal(
+                FailedReason.WRITE_TARGET_UNEXAMINABLE
+            ),
+            IgnoredReason.NOT_A_STILL: Ignored("/m/n", IgnoredReason.NOT_A_STILL),
+            IgnoredReason.HIDDEN_ENTRY: Ignored("/m/.h", IgnoredReason.HIDDEN_ENTRY),
         }
 
         remedy_bearing = {key for key, row in REGISTRY.items() if row.remedy}
@@ -301,8 +318,8 @@ class TestCoverageRate:
 
         coverage = summarise(outcomes).coverage
 
-        assert coverage.interpolated + coverage.extended == coverage.matched == 6
-        assert (coverage.interpolated, coverage.extended) == (3, 3)
+        assert sum(coverage.by_via.values()) == coverage.matched == 6
+        assert coverage.by_via == {"INTERPOLATED": 3, "EXTENDED": 3, "CENTROID": 0}
 
 
 class TestClockSensitivity:

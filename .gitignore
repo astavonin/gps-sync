@@ -21,3 +21,7 @@ dist/
 # mutmut working tree (a mutated copy of src/ and tests/, plus a testdata symlink) and its run log.
 mutants/
 mutants.log
+
+# The mutation baseline candidate and the stamp that binds it to the code it was checked against.
+mutation-baseline.candidate.txt
+mutation-baseline.candidate.txt.checked

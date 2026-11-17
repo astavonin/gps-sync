@@ -4,15 +4,20 @@ import math
 import statistics
 from collections import Counter
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from gps_sync.exitcode import ArtifactStatus
 from gps_sync.gpx import GpxFile
 from gps_sync.index import Overlap
 from gps_sync.model import (
+    ALTITUDE_SPECS,
     FAILED_AFTER_MATCH,
+    GPX_PATH_NO_ELEVATION,
     VARIANT_NAMES,
+    VIA_SPECS,
+    AltitudeOutcome,
+    Centroid,
     Extended,
     Failed,
     Geotagged,
@@ -21,6 +26,7 @@ from gps_sync.model import (
     Planned,
     Protected,
     ProtectedReason,
+    RunLevelReason,
     Unmatchable,
     UnmatchableReason,
     Via,
@@ -29,6 +35,7 @@ from gps_sync.model import (
     variant_name,
 )
 from gps_sync.registry import REGISTRY, spec
+from gps_sync.space import VolumeDemand
 from gps_sync.writer import Reconciliation
 
 
@@ -49,8 +56,7 @@ class Coverage:
 
     matched: int
     reached_matcher: int
-    interpolated: int
-    extended: int
+    by_via: dict[str, int]
 
     @property
     def rate(self) -> float | None:
@@ -90,6 +96,16 @@ class ClampWindow:
 
 
 @dataclass(frozen=True, slots=True)
+class Dispersion:
+    """The telemetry path's position-quality figure: the farthest used fix from each centroid."""
+
+    count: int
+    minimum_m: float | None
+    median_m: float | None
+    maximum_m: float | None
+
+
+@dataclass(frozen=True, slots=True)
 class RunSummary:
     """Every figure the report and the JSON record carry beyond the per-file records."""
 
@@ -101,6 +117,21 @@ class RunSummary:
     sensitivity: Sensitivity
     clamp_window: ClampWindow
     altitude_unavailable: int
+    altitude_breakdown: dict[str, int]
+    dispersion: Dispersion
+
+
+@dataclass(frozen=True, slots=True)
+class TelemetryRead:
+    """What the telemetry read cost: the phase that dominates a ``--video`` run's wall time."""
+
+    clips: int = 0
+    chunks: int = 0
+    elapsed_s: float = 0.0
+
+    def as_record(self) -> dict[str, float | int]:
+        """Render the figures for the JSON record and the audit verdict."""
+        return {"clips": self.clips, "chunks": self.chunks, "elapsed_s": self.elapsed_s}
 
 
 @dataclass(slots=True)
@@ -109,7 +140,7 @@ class RunInfo:
 
     mode: str
     media_root: str
-    tracks_root: str
+    tracks_root: str | None
     exiftool_version: str
     options: dict[str, Any]
     review_root: str
@@ -124,6 +155,9 @@ class RunInfo:
     incomplete_prior_records: tuple[tuple[str, str, int], ...]
     artifacts: ArtifactStatus
     reconciliation: Reconciliation | None
+    run_level: dict[str, int] = field(default_factory=dict)
+    space_demand: tuple[VolumeDemand, ...] = ()
+    telemetry_read: TelemetryRead = field(default_factory=TelemetryRead)
 
 
 def _is_matched(outcome: Outcome) -> bool:
@@ -143,11 +177,13 @@ def _coverage(outcomes: Sequence[Outcome]) -> Coverage:
     unmatchable = sum(isinstance(o, Unmatchable) for o in outcomes)
     matched_outcomes = [o for o in outcomes if _is_matched(o)]
     vias = Counter(matched_via(o) for o in matched_outcomes)
+    by_via = {via.value: vias[via] for via in Via}
+    if sum(by_via.values()) != len(matched_outcomes):
+        raise AssertionError("a matched outcome carries no via the coverage split enumerates")
     return Coverage(
         matched=len(matched_outcomes),
         reached_matcher=len(matched_outcomes) + unmatchable,
-        interpolated=vias[Via.INTERPOLATED],
-        extended=vias[Via.EXTENDED],
+        by_via=by_via,
     )
 
 
@@ -183,8 +219,8 @@ def _sensitivity(outcomes: Sequence[Outcome]) -> Sensitivity:
     for outcome in outcomes:
         match outcome:
             case Planned() | Geotagged():
-                if outcome.via is Via.EXTENDED:
-                    excluded["extended"] += 1
+                if not VIA_SPECS[outcome.via].fold_admitted:
+                    excluded[VIA_SPECS[outcome.via].exclusion_key or "speed_absent"] += 1
                 elif outcome.bracket_speed is None:
                     excluded["speed_absent"] += 1
                 else:
@@ -224,6 +260,7 @@ def summarise(outcomes: Sequence[Outcome]) -> RunSummary:
     for name, kind in (("Planned", Planned), ("Geotagged", Geotagged)):
         counted = Counter(o.via for o in outcomes if isinstance(o, kind))
         success[name] = {via.value: counted[via] for via in Via}
+    planned_or_written = [o for o in outcomes if isinstance(o, Planned | Geotagged)]
     return RunSummary(
         variant_counts={name: variants[name] for name in VARIANT_NAMES},
         reason_counts={name: reasons[name] for name in candidate_reasons},
@@ -232,7 +269,57 @@ def summarise(outcomes: Sequence[Outcome]) -> RunSummary:
         remedies=_remedies(outcomes),
         sensitivity=_sensitivity(outcomes),
         clamp_window=_clamp_window(outcomes),
-        altitude_unavailable=sum(
-            isinstance(o, Planned | Geotagged) and o.position.ele is None for o in outcomes
-        ),
+        altitude_unavailable=sum(o.position.ele is None for o in planned_or_written),
+        altitude_breakdown=_altitude_breakdown(planned_or_written),
+        dispersion=_dispersion(planned_or_written),
     )
+
+
+def _altitude_breakdown(outcomes: Sequence[Planned | Geotagged]) -> dict[str, int]:
+    """Break the unavailable-altitude figure out over its declared terms.
+
+    The terms are the altitude outcomes the table marks unavailable plus the GPX-path term, so
+    they sum to the figure. An outcome the table does not mark unavailable names files that carry
+    an elevation and is outside the breakout by that declaration.
+    """
+    counts = {m.value: 0 for m in AltitudeOutcome if ALTITUDE_SPECS[m].unavailable}
+    gpx = 0
+    for outcome in outcomes:
+        if isinstance(outcome.provenance, Centroid):
+            if ALTITUDE_SPECS[outcome.provenance.altitude].unavailable:
+                counts[outcome.provenance.altitude.value] += 1
+        elif outcome.position.ele is None:
+            gpx += 1
+    counts[GPX_PATH_NO_ELEVATION] = gpx
+    return counts
+
+
+def _dispersion(outcomes: Sequence[Planned | Geotagged]) -> Dispersion:
+    spreads = [o.provenance.spread_m for o in outcomes if isinstance(o.provenance, Centroid)]
+    if not spreads:
+        return Dispersion(0, None, None, None)
+    return Dispersion(len(spreads), min(spreads), statistics.median(spreads), max(spreads))
+
+
+def run_level_figures(
+    outcomes: Sequence[Outcome],
+    *,
+    tracks_given: bool,
+    reconciliation: Reconciliation | None,
+) -> dict[str, int]:
+    """Count each run-level condition that fired, keyed on its registry row's JSON string.
+
+    A field is present exactly when its condition fired, so absence means it did not.
+    """
+    figures: dict[str, int] = {}
+    unmatched = sum(isinstance(o, Unmatchable) for o in outcomes)
+    if not tracks_given and unmatched:
+        figures[RunLevelReason.NO_TRACKS_ROOT_FOR_MATCHED_CANDIDATES.value] = unmatched
+    dropped = sum(isinstance(o, Planned | Geotagged) and o.elevation_dropped for o in outcomes)
+    if dropped:
+        figures[RunLevelReason.ELEVATION_NOT_REPRESENTABLE.value] = dropped
+    if reconciliation is not None and reconciliation.unintended:
+        figures[RunLevelReason.WRITE_UNINTENDED_PATH.value] = len(reconciliation.unintended)
+    if reconciliation is not None and reconciliation.unreconciled:
+        figures[RunLevelReason.BLOCK_COUNT_UNRECONCILED.value] = reconciliation.unreconciled_figure
+    return figures

@@ -7,7 +7,6 @@ import pytest
 
 import gps_sync
 from gps_sync.argfile import emit_argfile, path_line
-from gps_sync.classifier import classify
 from gps_sync.errors import InternalConsistencyError, ToolFailure
 from gps_sync.model import Failed, FailedReason, Position
 from gps_sync.reader import read_records
@@ -16,6 +15,7 @@ from gps_sync.transport import (
     EXIFTOOL_ENV,
     MINIMUM_VERSION,
     READ_TAGS,
+    TELEMETRY_TAGS,
     ReadResult,
     check_version,
     locate_exiftool,
@@ -24,7 +24,7 @@ from gps_sync.transport import (
     write_command,
 )
 from gps_sync.writer import build_write_lines
-from tests.support import FakeTransport, config, index_of, raf_json, segment
+from tests.support import FakeTransport, classify, config, index_of, raf_json, segment
 
 SRC = Path(gps_sync.__file__).parent
 # Inside the track at the record's instant, so only the position gate can keep a file from Planned.
@@ -89,9 +89,29 @@ class TestInvocations:
             "-Model": "context",
             "-Warning": "gate",
             "-Error": "gate",
+            "-CreationDate": "time",
+            "-MajorBrand": "time",
+            "-Duration": "telemetry coverage check",
+            "-HandlerType": "path verdict",
+            "-Keys:GPSCoordinates": "gate",
+            "-UserData:GPSCoordinates": "gate",
+            "-ItemList:GPSCoordinates": "gate",
         }
 
         assert set(READ_TAGS) == set(consumers)
+
+    def test_every_telemetry_tag_has_a_declared_consumer_listed_independently_of_the_tuple(self):
+        consumers = {
+            "-GPSLatitude": "centroid aggregation",
+            "-GPSLongitude": "centroid aggregation",
+            "-AbsoluteAltitude": "centroid elevation",
+            "-SampleTime": "coverage check",
+            "-Keys:GPSCoordinates": "atom question",
+            "-UserData:GPSCoordinates": "atom question",
+            "-ItemList:GPSCoordinates": "atom question",
+        }
+
+        assert set(TELEMETRY_TAGS) == set(consumers)
 
     def test_no_invocation_carries_a_prohibited_capability(self, tmp_path):
         from tests.unit.test_writer import planned
@@ -296,7 +316,7 @@ class TestBatchedRead:
 
         record = TagRecord.from_json(raw)
 
-        assert record.date_time_original is None
+        assert record.date_time_original == ""
         outcome = classify(record, TRACK, config())
         assert isinstance(outcome, Failed)
         assert outcome.reason is FailedReason.TIME_UNRESOLVABLE
